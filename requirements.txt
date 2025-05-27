@@ -1,0 +1,12 @@
+ipython==8.12.3
+ipython==8.32.0+computecanada
+matplotlib==3.9.2
+numpy==1.26.4
+pandas==1.5.3+computecanada
+scikit_learn==1.5.2
+scipy==1.14.1
+seaborn==0.13.2
+statsmodels==0.14.3+computecanada
+streamlit==1.44.1
+torch==2.4.1+computecanada
+umap_learn==0.5.7+computecanada
