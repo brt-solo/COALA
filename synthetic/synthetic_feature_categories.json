@@ -1,0 +1,18 @@
+{
+  "Genetic": [
+    "G1",
+    "G2"
+  ],
+  "Environment": [
+    "E1",
+    "E2"
+  ],
+  "Nutritional": [
+    "N1",
+    "N2"
+  ],
+  "Metabolic": [
+    "M1",
+    "M2"
+  ]
+}
