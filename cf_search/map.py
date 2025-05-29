@@ -357,7 +357,7 @@ import random
 class mapcf_instance:
     """MAP-Elites where crossover and mutation happen within the same cell."""
 
-    def __init__(self, dim_map, dim_x, max_evals, params, cell_feature_sets, X_train_df, feature_categories, X_reference, wrapper):
+    def __init__(self, dim_map, dim_x, max_evals, params, cell_feature_sets, X_train_df, feature_categories, X_reference, wrapper, seed=6):
         self.dim_map = dim_map
         self.dim_x = dim_x
         self.max_evals = max_evals
@@ -372,13 +372,23 @@ class mapcf_instance:
         self.feature_mins = np.array(params["min"]).astype(float)
         self.feature_maxs = np.array(params["max"]).astype(float)
 
+        def is_binary_like(series, tol=1e-4):
+            unique_vals = np.unique(np.round(series.dropna(), decimals=4))
+            return len(unique_vals) == 2
+
         self.binary_features = [
-            col for col in self.X_train_df.columns 
-            if set(self.X_train_df[col].dropna().unique()) == {0, 1}
+            col for col in self.X_train_df.columns
+            if is_binary_like(self.X_train_df[col])
         ]
+
         self.feature_indices = {feature: list(self.X_train_df.columns).index(feature) for feature in self.X_train_df.columns}
 
         self.is_sklearn_model = isinstance(wrapper, BaseEstimator)
+        self.seed = seed
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+        torch.manual_seed(self.seed)
+
 
     def evaluate_batch(self, feature_matrix):
         feature_matrix = np.array(feature_matrix, dtype=np.float32)
@@ -411,43 +421,72 @@ class mapcf_instance:
         return child
 
     def sbx_crossover(self, x, y, mutable_features):
-        eta = 1.0
+        """
+        Simulated Binary Crossover (SBX), applied only to mutable features.
+
+        - Uses `eta` parameter to control offspring distribution.
+        - Ensures crossover affects **only** mutable features.
+        - Keeps binary features (0 or 1) intact.
+        """
+        eta = 1.0  # Distribution parameter
         xl = np.array(self.params['min'])
         xu = np.array(self.params['max'])
+        
+        # Ensure x and y are NumPy arrays
         x = np.array(x, dtype=float)
         y = np.array(y, dtype=float)
-        child = x.copy()
+        
         r1 = np.random.random(size=len(mutable_features))
         r2 = np.random.random(size=len(mutable_features))
+
+        child = np.array(self.X_reference).copy()  # Start from reference, then mutate only mutable features
 
         for idx, feature in enumerate(mutable_features):
             feature_index = self.feature_indices[feature]
 
-            if abs(x[feature_index] - y[feature_index]) > 1e-15:
-                x1, x2 = min(x[feature_index], y[feature_index]), max(x[feature_index], y[feature_index])
-                beta = 1.0 + (2.0 * max(0, x1 - xl[feature_index])) / max(1e-15, (x2 - x1))
+            # If binary, skip SBX (you might handle binary features separately)
+            if feature in self.binary_features:
+                continue
+
+            # Extract bounds
+            x1 = min(x[feature_index], y[feature_index])
+            x2 = max(x[feature_index], y[feature_index])
+            if abs(x2 - x1) < 1e-15:
+                continue  # Parents are too similar
+
+            xl_i = xl[feature_index]
+            xu_i = xu[feature_index]
+
+            # SBX calculations
+            beta = 1.0 + (2.0 * (x1 - xl_i)) / (x2 - x1)
+            alpha = 2.0 - beta ** -(eta + 1)
+            rand = r1[idx]
+            if rand <= 1.0 / alpha:
+                beta_q = (rand * alpha / 2.0) ** (1.0 / (eta + 1))
+            else:
+                beta_q = (1.0 / (2.0 - rand * alpha)) ** (1.0 / (eta + 1))
+
+                ''' below is redundant
+                beta = 1.0 + (2.0 * max(0, xu[feature_index] - x2)) / max(1e-15, (x2 - x1))
                 alpha = max(1.0, 2.0 - beta ** -(eta + 1))
-                rand = r1[idx]
+
                 if (2.0 - rand * alpha) > 0:
                     beta_q = (1.0 / (2.0 - rand * alpha)) ** (1.0 / (eta + 1))
                 else:
-                    beta_q = 1.0
-                c1 = 0.5 * (x1 + x2 - beta_q * (x2 - x1))
-                c2 = 0.5 * (x1 + x2 + beta_q * (x2 - x1))
-                c1 = min(max(c1, xl[feature_index]), xu[feature_index])
-                c2 = min(max(c2, xl[feature_index]), xu[feature_index])
+                    beta_q = 1.0  
+                '''
+                # Generate child candidates
+                c1 = 0.5 * ((x1 + x2) - beta_q * (x2 - x1))
+                c2 = 0.5 * ((x1 + x2) + beta_q * (x2 - x1))
+
+                # Clip to bounds
+                c1 = np.clip(c1, xl_i, xu_i)
+                c2 = np.clip(c2, xl_i, xu_i)
+
+                # Randomly choose one child
                 child[feature_index] = c2 if r2[idx] <= 0.5 else c1
 
-        child = np.clip(child, xl, xu)
-        return child
-
-    def mutate(self, child, mutable_features, mutation_strength=0.2):
-        mutation_step = np.zeros_like(child)
-        for feature in mutable_features:
-            if feature not in self.binary_features:
-                feature_index = self.feature_indices[feature]
-                mutation_step[feature_index] = np.random.uniform(-mutation_strength, mutation_strength)
-        child += mutation_step
+        # Done — `child` has mutable features modified, non-mutable ones set to reference
         return child
 
     def initialize_archive(self):
@@ -464,10 +503,31 @@ class mapcf_instance:
 
             mutable_features = self.cell_feature_sets[cell_index]
             feature_vector = self.X_reference.copy()
-
+            
             for feature in mutable_features:
                 feature_index = self.feature_indices[feature]
-                feature_vector[feature_index] = np.random.uniform(self.feature_mins[feature_index], self.feature_maxs[feature_index])
+                if feature in self.binary_features:
+                    # Choose from actual binary-like values found in training data
+                    values = np.unique(np.round(self.X_train_df[feature].dropna(), decimals=4))
+                    feature_vector[feature_index] = np.random.choice(values)
+                else:
+                    # 20% chance of min, 20% chance of max, 60% uniform
+                    rand = np.random.rand()
+                    if rand < 0.2:
+                        feature_vector[feature_index] = self.feature_mins[feature_index]
+                    elif rand < 0.4:
+                        feature_vector[feature_index] = self.feature_maxs[feature_index]
+                    else:
+                        feature_vector[feature_index] = np.random.uniform(
+                            self.feature_mins[feature_index], self.feature_maxs[feature_index]
+                        )
+
+            '''
+            for feature in mutable_features:
+                feature_index = self.feature_indices[feature]
+                values = self.X_train_df[feature].dropna().to_numpy()
+                feature_vector[feature_index] = np.random.choice(values)
+            '''
 
             batch_vectors.append(feature_vector)
             batch_cells.append(cell_index)
@@ -499,7 +559,7 @@ class mapcf_instance:
     def run(self):
         self.initialize_archive()
 
-        batch_size = 512  # ✅ you can set 32 or 64
+        batch_size = 512
         child_batch = []
         cell_batch = []
 
@@ -524,7 +584,7 @@ class mapcf_instance:
             child_batch.append(child)
             cell_batch.append(cell_index)
 
-            # 🧠 When batch is full or last step
+            # When batch is full or last step
             if len(child_batch) == batch_size or a == total_steps - 1:
                 fitness_batch = self.evaluate_batch(child_batch)
 

@@ -58,7 +58,7 @@ def plot_cellwise_grid(archive_dict, cell_feature_sets, feature_categories, plot
     return fig
 '''
 
-def plot_cellwise_grid(archive_dict, cell_feature_sets, feature_categories, plot_fn, plot_type_name="Grid", figsize_per_cell=(4, 4), colorbar_label="Predicted lung function", **kwargs):
+def plot_cellwise_grid(archive_dict, cell_feature_sets, feature_categories, plot_fn, plot_type_name="Grid", figsize_per_cell=(4, 4), colorbar_label="Predicted outcome", **kwargs):
     categories = list(feature_categories.keys())
     n = len(categories)
     fig, axes = plt.subplots(n, n, figsize=(figsize_per_cell[0]*n, figsize_per_cell[1]*n), dpi=300)
@@ -532,6 +532,7 @@ def plot_cf_clustermap_cell(ax, df, cell_key, mutable_features):
             cbar=False,
             ax=ax
         )
+
         ax.set_title(f"Cell {cell_key}", fontsize=8)
     except Exception:
         ax.axis("off")
@@ -557,8 +558,8 @@ def plot_cf_umap_cell(ax, df, cell_key, mutable_features):
 
     ax.scatter(X_umap[:, 0], X_umap[:, 1], c=labels, cmap='tab10', s=10, alpha=0.7)
     ax.set_title(f"Cell {cell_key}")
-    ax.set_xticks([])
-    ax.set_yticks([])
+    ax.tick_params(left=True, bottom=True, labelleft=True, labelbottom=True)
+
 
 
 def plot_cf_eta2_bar_cell(ax, df, cell_key, mutable_features, top_n=5):

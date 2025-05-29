@@ -72,7 +72,7 @@ if not all(col in ref_df.columns for col in X_train_df.columns):
 params = {
     "min": np.array(X_train_df.min()),
     "max": np.array(X_train_df.max()),
-    "random_init_batch": 1000
+    "random_init_batch": 5000
 }
 
 print(params)
