@@ -21,17 +21,54 @@ class SimpleMLP(nn.Module):
     def __init__(self, input_dim):
         super().__init__()
         self.model = nn.Sequential(
-            nn.Linear(input_dim, 16),
+            nn.Linear(input_dim, 128),
             nn.ReLU(),
-            nn.Linear(16, 1)
+            #nn.Dropout(0.1),
+            nn.Linear(128, 32),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(32, 1)
         )
-
     def forward(self, x):
         return self.model(x)
 
+
+class PerfectWrapper:
+    def __init__(self):
+        # Define feature ordering if needed
+        self.feature_names = ['G1', 'G2', 'E1', 'E2', 'N1', 'N2', 'M1', 'M2']
+
+    def predict(self, X):
+        # If input is a DataFrame, convert to NumPy in correct order
+        if hasattr(X, 'loc') or hasattr(X, 'iloc'):
+            X = X[self.feature_names].values
+
+        G1 = X[:, 0]
+        G2 = X[:, 1]
+        E1 = X[:, 2]
+        E2 = X[:, 3]
+        N1 = X[:, 4]
+        N2 = X[:, 5]
+        M1 = X[:, 6]
+        M2 = X[:, 7]
+
+        y = (
+            0.7 * E1 +
+            0.2 * N1 +
+            0.9 * N2 +
+            0.3 * M1 +
+            0.5 * M2 +
+            1.8 * G2 * E2 +
+            1.8 * G1 * N2 * M2
+        )
+        return y
+
 model_info = {
-    "linear_model": f"~/MAP-CF/synthetic/linear_model.pkl",
+    "perfect_model": f"~/MAP-CF/synthetic/perfect_model.pkl",
     "mlp_model": f"~/MAP-CF/synthetic/mlp_model.pth",
+    "linear_model": f"~/MAP-CF/synthetic/linear_model.pkl",
+
+    
     #"hgb_model": f"~/MAP-CF/synthetic/hgboost_model.pkl"
     
     
@@ -119,7 +156,7 @@ for model_name, model_path in model_info.items():
         elite = mapcf_instance(
             dim_map=num_categories,
             dim_x=X_train_df.shape[1],
-            max_evals=10000,
+            max_evals=25000,
             params=params,
             cell_feature_sets=cell_feature_sets,
             X_train_df=X_train_df,

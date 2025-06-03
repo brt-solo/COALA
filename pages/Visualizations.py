@@ -15,6 +15,7 @@ from cf_search.visualize import (
     plot_all_mutable_clusters_by_heatmap,
     plot_cf_clustermap_cell,
     plot_cf_umap_cell,
+    plot_cf_umap_cell_clusters,
     plot_cf_eta2_bar_cell,
     plot_cf_meanvalue_heatmap_cell,
     plot_cf_kde_cell,
@@ -409,6 +410,7 @@ st.subheader("📊 Per-Cell Hierarchical Clustering Visualizations")
 
 plot_type = st.selectbox("Choose plot type", [
     "Clustermap",
+    "UMAP",
     "UMAP (clustered)",
     "η² barplot",
     "η² barplot (constraints)",
@@ -429,6 +431,7 @@ if plot_now:
             plot_cellwise_grid,
             plot_cf_clustermap_cell,
             plot_cf_umap_cell,
+            plot_cf_umap_cell_clusters,
             plot_cf_eta2_bar_cell,
             plot_cf_eta2_bar_constraints_cell,
             plot_cf_meanvalue_heatmap_cell, 
@@ -439,8 +442,10 @@ if plot_now:
 
         if plot_type == "Clustermap":
             fig = plot_cellwise_grid(archive_data, cell_feature_sets, feature_categories, plot_cf_clustermap_cell, "Clustermap Grid")
+        elif plot_type == "UMAP":
+            fig = plot_cellwise_grid(archive_data, cell_feature_sets, feature_categories, plot_cf_umap_cell, "UMAP", color_feature=color_feature)
         elif plot_type == "UMAP (clustered)":
-            fig = plot_cellwise_grid(archive_data, cell_feature_sets, feature_categories, plot_cf_umap_cell, "UMAP by Cluster")
+            fig = plot_cellwise_grid(archive_data, cell_feature_sets, feature_categories, plot_cf_umap_cell_clusters, "UMAP by Cluster")
         elif plot_type == "η² barplot":
             fig = plot_cellwise_grid(archive_data, cell_feature_sets, feature_categories, plot_cf_eta2_bar_cell, "Top η² Features")
         elif plot_type == "η² barplot (constraints)":

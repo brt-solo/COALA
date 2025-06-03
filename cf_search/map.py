@@ -371,6 +371,7 @@ class mapcf_instance:
 
         self.feature_mins = np.array(params["min"]).astype(float)
         self.feature_maxs = np.array(params["max"]).astype(float)
+        self.X_reference = np.clip(self.X_reference, self.feature_mins, self.feature_maxs)
 
         def is_binary_like(series, tol=1e-4):
             unique_vals = np.unique(np.round(series.dropna(), decimals=4))
@@ -384,6 +385,7 @@ class mapcf_instance:
         self.feature_indices = {feature: list(self.X_train_df.columns).index(feature) for feature in self.X_train_df.columns}
 
         self.is_sklearn_model = isinstance(wrapper, BaseEstimator)
+        self.is_torch_model = hasattr(wrapper, "eval") and callable(wrapper.eval)
         self.seed = seed
         np.random.seed(self.seed)
         random.seed(self.seed)
@@ -392,27 +394,28 @@ class mapcf_instance:
 
     def evaluate_batch(self, feature_matrix):
         feature_matrix = np.array(feature_matrix, dtype=np.float32)
-        
-        if self.is_sklearn_model:
-            return self.wrapper.predict(feature_matrix)
-        else:
-            feature_tensor = torch.tensor(feature_matrix, dtype=torch.float32).to(device)
+
+        if self.is_torch_model:
             self.wrapper.eval()
+            feature_tensor = torch.tensor(feature_matrix, dtype=torch.float32).to(device)
             with torch.no_grad():
                 predictions = self.wrapper(feature_tensor).cpu().numpy().flatten()
             return predictions
+        else:
+            return self.wrapper.predict(feature_matrix)
 
 
     def evaluate_instance(self, feature_vector):
-        if self.is_sklearn_model:
-            feature_vector = np.array(feature_vector).reshape(1, -1)
-            predicted_value = self.wrapper.predict(feature_vector)[0]
-        else:
-            feature_tensor = torch.tensor(feature_vector, dtype=torch.float32).unsqueeze(0).to(device)
+        if self.is_torch_model:
             self.wrapper.eval()
+            feature_tensor = torch.tensor(feature_vector, dtype=torch.float32).unsqueeze(0).to(device)
             with torch.no_grad():
                 predicted_value = self.wrapper(feature_tensor).cpu().numpy().flatten()[0]
-        return predicted_value
+            return predicted_value
+        else:
+            feature_vector = np.array(feature_vector).reshape(1, -1)
+            return self.wrapper.predict(feature_vector)[0]
+
 
     def ensure_binary_validity(self, child):
         for feature in self.binary_features:
@@ -513,6 +516,7 @@ class mapcf_instance:
                 else:
                     # 20% chance of min, 20% chance of max, 60% uniform
                     rand = np.random.rand()
+                    
                     if rand < 0.2:
                         feature_vector[feature_index] = self.feature_mins[feature_index]
                     elif rand < 0.4:
@@ -528,7 +532,6 @@ class mapcf_instance:
                 values = self.X_train_df[feature].dropna().to_numpy()
                 feature_vector[feature_index] = np.random.choice(values)
             '''
-
             batch_vectors.append(feature_vector)
             batch_cells.append(cell_index)
 
@@ -555,10 +558,19 @@ class mapcf_instance:
             self.archive[cell_index]["population"].append((child, fitness))
             if fitness > self.archive[cell_index]["best"][1]:
                 self.archive[cell_index]["best"] = (child, fitness)
+    def mutate(self, parent, mutable_features, mutation_rate=0.2):
+        child = parent.copy()
+        for feature in mutable_features:
+            if np.random.rand() < mutation_rate:
+                index = self.feature_indices[feature]
+                if feature in self.binary_features:
+                    child[index] = 1 - int(round(child[index]))
+                else:
+                    child[index] = np.random.uniform(self.feature_mins[index], self.feature_maxs[index])
+        return child
 
     def run(self):
         self.initialize_archive()
-
         batch_size = 512
         child_batch = []
         cell_batch = []
@@ -578,7 +590,7 @@ class mapcf_instance:
             parent_1, parent_2 = self.select_parents(cell_index)
 
             child = self.sbx_crossover(parent_1, parent_2, mutable_features)
-            # child = self.mutate(child, mutable_features)
+            #child = self.mutate(parent_1, mutable_features)
             child = self.ensure_binary_validity(child)
 
             child_batch.append(child)
