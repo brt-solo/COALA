@@ -425,6 +425,8 @@ if plot_type == "KDE by feature":
 
 plot_now = st.button("Generate Grid Plot")
 
+
+
 if plot_now:
     with st.spinner("Generating plot..."):
         from cf_search.visualize import (
@@ -447,13 +449,13 @@ if plot_now:
         elif plot_type == "UMAP (clustered)":
             fig = plot_cellwise_grid(archive_data, cell_feature_sets, feature_categories, plot_cf_umap_cell_clusters, "UMAP by Cluster")
         elif plot_type == "η² barplot":
-            fig = plot_cellwise_grid(archive_data, cell_feature_sets, feature_categories, plot_cf_eta2_bar_cell, "Top η² Features")
+            fig = plot_cellwise_grid(archive_data, cell_feature_sets, feature_categories, plot_cf_eta2_bar_cell, "Top η² Features", max_k=max_k)
         elif plot_type == "η² barplot (constraints)":
-            fig = plot_cellwise_grid(archive_data, cell_feature_sets, feature_categories, plot_cf_eta2_bar_constraints_cell, "Top η² Features")
+            fig = plot_cellwise_grid(archive_data, cell_feature_sets, feature_categories, plot_cf_eta2_bar_constraints_cell, "Top η² Features", max_k=max_k)
         elif plot_type == "Mean value heatmap (mutable)":
-            fig = plot_cellwise_grid(archive_data, cell_feature_sets, feature_categories, plot_cf_meanvalue_heatmap_cell, "Mean Values per Cluster")
+            fig = plot_cellwise_grid(archive_data, cell_feature_sets, feature_categories, plot_cf_meanvalue_heatmap_cell, "Mean Values per Cluster", max_k=max_k)
         elif plot_type == "Mean value heatmap (constraints)":
-            fig = plot_cellwise_grid(archive_data, cell_feature_sets,  feature_categories, plot_cf_meanvalue_heatmap_constraints_cell, "Constraint Mean Heatmaps")
+            fig = plot_cellwise_grid(archive_data, cell_feature_sets,  feature_categories, plot_cf_meanvalue_heatmap_constraints_cell, "Constraint Mean Heatmaps", max_k=max_k)
         elif plot_type == "KDE by feature":
             fig = plot_cellwise_grid(archive_data, cell_feature_sets, feature_categories, plot_cf_kde_cell, f"KDE of {selected_feature}", feature=selected_feature)
         elif plot_type == "Tree (constraints → HClust)":
