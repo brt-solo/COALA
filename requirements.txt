@@ -11,3 +11,4 @@ torch==2.4.1
 umap_learn==0.5.7
 tabpfn==2.0.9
 ipykernel==6.29.5
+shap==0.39.0

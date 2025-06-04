@@ -589,8 +589,8 @@ class mapcf_instance:
             mutable_features = self.cell_feature_sets[cell_index]
             parent_1, parent_2 = self.select_parents(cell_index)
 
-            child = self.sbx_crossover(parent_1, parent_2, mutable_features)
-            #child = self.mutate(parent_1, mutable_features)
+            #child = self.sbx_crossover(parent_1, parent_2, mutable_features)
+            child = self.mutate(parent_1, mutable_features)
             child = self.ensure_binary_validity(child)
 
             child_batch.append(child)

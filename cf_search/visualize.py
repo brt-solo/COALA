@@ -101,8 +101,9 @@ def plot_cellwise_grid(archive_dict, cell_feature_sets, feature_categories, plot
     # Add separate row labels using fig.text instead of modifying subplot y-axis labels
     for j in range(n):
         fig.text(
-            0.07,  # x-position (near left)
-            0.8*(j) / n+0.2,  # y-position (center of the subplot row)
+            0,  # x-position (near left)
+            #0.8*(j) / n+0.2,  # y-position (center of the subplot row) - for four cells
+            2*(j) / n+0.5, 
             categories[n - 1 - j],
             ha='right',
             va='center',
@@ -655,7 +656,7 @@ def eta_squared_1d(x, labels):
     return eta_sq
 
 
-def plot_cf_eta2_bar_cell(ax, df, cell_key, mutable_features, top_n=5, max_k=5, verbose=False):
+def plot_cf_eta2_bar_cell(ax, df, cell_key, mutable_features, top_n=6, max_k=5, verbose=False):
     if df.empty or len(mutable_features) < 2:
         ax.axis("off")
         return

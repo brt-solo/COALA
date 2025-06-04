@@ -78,7 +78,7 @@ if archive_data:
     st.subheader("Select Cell to Visualize")
     
     i = st.number_input("Cell row index (i)", min_value=0, max_value=num_categories - 1, value=0)
-    j = st.number_input("Cell column index (j)", min_value=0, max_value=num_categories - 1, value=1)
+    j = st.number_input("Cell column index (j)", min_value=0, max_value=num_categories - 1, value=min(1, num_categories - 1))
     selected_cell = (i, j)
 
     if st.button("Extract Data for Cell"):

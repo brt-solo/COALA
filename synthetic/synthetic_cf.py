@@ -53,12 +53,12 @@ class PerfectWrapper:
         M2 = X[:, 7]
 
         y = (
-            0.7 * E1 +
+            0.7 * E2 +
             0.2 * N1 +
             0.9 * N2 +
             0.3 * M1 +
             0.5 * M2 +
-            1.8 * G2 * E2 +
+            1.8 * G2 * E1 +
             1.8 * G1 * N2 * M2
         )
         return y
@@ -76,7 +76,7 @@ model_info = {
 
 train_df_file = f"~/MAP-CF/synthetic/synthetic_train.csv"
 reference_file = f"~/MAP-CF/synthetic/synthetic_test.csv"
-feature_json_file = "~/MAP-CF/synthetic/synthetic_feature_categories.json"
+feature_json_file = "~/MAP-CF/synthetic/synthetic_feature_categories_action.json"
 
 # Expand paths
 train_df_file = os.path.expanduser(train_df_file)
@@ -156,7 +156,7 @@ for model_name, model_path in model_info.items():
         elite = mapcf_instance(
             dim_map=num_categories,
             dim_x=X_train_df.shape[1],
-            max_evals=25000,
+            max_evals=10000,
             params=params,
             cell_feature_sets=cell_feature_sets,
             X_train_df=X_train_df,
@@ -178,7 +178,7 @@ for model_name, model_path in model_info.items():
         archive_dict[idx] = pd.DataFrame(data_records)
 
     # Save archive
-    archive_filename = f"output/{model_name}_counterfactuals.pkl"
+    archive_filename = f"output/{model_name}_counterfactuals_action.pkl"
     with open(archive_filename, "wb") as f:
         pickle.dump(archive_dict, f)
     print(f"Saved: {archive_filename}")
