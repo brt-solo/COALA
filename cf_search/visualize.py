@@ -115,7 +115,6 @@ def plot_cellwise_grid(archive_dict, cell_feature_sets, feature_categories, plot
     if mappables:
         cbar = fig.colorbar(mappables[0], ax=axes, orientation='horizontal', fraction=0.02, pad=0.01)
         cbar.set_label(colorbar_label, fontsize=12)
-    
     fig.subplots_adjust(wspace=0.3, hspace=0.2)  # Adjust these values as needed
 
     return fig
@@ -932,34 +931,48 @@ def plot_cf_meanvalue_heatmap_constraints_cell(ax, df, cell_key, mutable_feature
     except Exception:
         ax.axis("off")
 
-
-def plot_cf_kde_cell(ax, df, cell_key, mutable_features, feature):
+def plot_cf_kde_cell(ax, df, cell_key, mutable_features, feature, max_k=5, min_variance=1e-4):
     if df.empty or feature not in df.columns:
         ax.axis("off")
         return
 
-    # Cluster on mutable features if possible, else on all features
-    features_for_clustering = mutable_features
-    X = df[features_for_clustering].values
-    if X.shape[0] < 3:
+    if len(mutable_features) < 2 or df.shape[0] < 3:
         ax.axis("off")
         return
 
+    # Cluster on mutable features
+    X = df[mutable_features].values
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
+
     try:
-        k, labels, Z = optimal_hclust_k(X_scaled, max_k=5)
+        k, labels, Z = optimal_hclust_k(X_scaled, max_k=max_k)
         df = df.copy()
         df['cluster'] = labels
 
-        for c in sorted(df['cluster'].unique()):
-            if feature in df.columns:
-                sns.kdeplot(df[df['cluster'] == c][feature], label=f'Cluster {c}', fill=True, ax=ax, alpha=0.3)
+        plotted = False
 
-        ax.set_title(f"{feature} by Cluster\nCell {cell_key}")
-        ax.legend()
-    except Exception:
+        for c in sorted(df['cluster'].unique()):
+            cluster_values = df[df['cluster'] == c][feature]
+            if cluster_values.var() <= min_variance:
+                print(f"[Cell {cell_key}] Skipping Cluster {c} due to low variance: {cluster_values.var():.2e}")
+                continue
+
+            sns.kdeplot(cluster_values, label=f'Cluster {c}', fill=True, ax=ax, alpha=0.3)
+            plotted = True
+
+        if plotted:
+            #ax.set_ylim(0, 20)
+            ax.set_title(f"{feature} by Cluster\nCell {cell_key}")
+            ax.legend(fontsize=6)
+            print("Y max after plotting:", ax.get_ylim()[1])
+        else:
+            ax.axis("off")
+
+    except Exception as e:
+        print(f"[Cell {cell_key}] Error: {e}")
         ax.axis("off")
+
 
 
 

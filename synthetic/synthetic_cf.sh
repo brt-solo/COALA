@@ -15,4 +15,58 @@ export PYTHONPATH=$PYTHONPATH:/global/home/hpc5434/MAP-CF
 
 
 cd /global/home/hpc5434/MAP-CF/synthetic
-python -u synthetic_cf.py
+#!/bin/bash
+
+FEATURE_CAT=~/MAP-CF/synthetic/synthetic_feature_categories_action.json
+METHODS=("single_point" "uniform" "sbx")
+MUT_RATES=("None" "0.01" "0.1")
+INIT_POPS=(500 1000)
+ITERS=(2000 5000)
+
+MODELS=("perfect_model" "mlp_model")
+
+for MODEL_NAME in "${MODELS[@]}"; do
+
+  if [ "$MODEL_NAME" == "perfect_model" ]; then
+    MODEL=~/MAP-CF/synthetic/perfect_model.pkl
+    REFERENCE=~/MAP-CF/synthetic/synthetic_test.csv
+    TRAIN=~/MAP-CF/synthetic/synthetic_train.csv
+  else
+    MODEL=~/MAP-CF/synthetic/mlp_model.pth
+    REFERENCE=~/MAP-CF/synthetic/synthetic_test_scaled.csv
+    TRAIN=~/MAP-CF/synthetic/synthetic_train_scaled.csv
+  fi
+
+  for METHOD in "${METHODS[@]}"; do
+    for RATE in "${MUT_RATES[@]}"; do
+      for INIT in "${INIT_POPS[@]}"; do
+        for ITER in "${ITERS[@]}"; do
+
+          OUTPUT="${MODEL_NAME}_${METHOD}_init${INIT}_iter${ITER}"
+          if [ "$RATE" != "None" ]; then
+            OUTPUT="${OUTPUT}_mut${RATE}"
+          fi
+
+          CMD="python -u synthetic_cf.py \
+            --model $MODEL \
+            --reference $REFERENCE \
+            --train $TRAIN \
+            --feature_cat \"$FEATURE_CAT\" \
+            --model_name $MODEL_NAME \
+            --method $METHOD \
+            --init_pop $INIT \
+            --iter $ITER \
+            --output $OUTPUT"
+
+          if [ "$RATE" != "None" ]; then
+            CMD="$CMD --mutation_rate $RATE"
+          fi
+
+          echo "Running: $CMD"
+          eval $CMD
+
+        done
+      done
+    done
+  done
+done
