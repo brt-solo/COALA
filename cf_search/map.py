@@ -416,9 +416,9 @@ class mapcf_instance:
                     # 20% chance of min, 20% chance of max, 60% uniform
                     rand = np.random.rand()
                     
-                    if rand < 0.2:
+                    if rand < 0.05:
                         feature_vector[feature_index] = self.feature_mins[feature_index]
-                    elif rand < 0.4:
+                    elif rand < 0.1:
                         feature_vector[feature_index] = self.feature_maxs[feature_index]
                     else:
                         feature_vector[feature_index] = np.random.uniform(
@@ -469,8 +469,14 @@ class mapcf_instance:
     def ensure_binary_validity(self, child):
         for feature in self.binary_features:
             index = self.feature_indices[feature]
-            child[index] = np.clip(round(child[index]), 0, 1)
+            original_val = child[index]
+            # Find original two valid values
+            valid_values = np.unique(np.round(self.X_train_df[feature].dropna(), decimals=4))
+            if len(valid_values) == 2:
+                # Snap to closest of the two
+                child[index] = valid_values[np.argmin(np.abs(valid_values - original_val))]
         return child
+
 
     def single_point_crossover(self, p1, p2, mutable_features):
         """
@@ -601,7 +607,7 @@ class mapcf_instance:
 
     def run(self):
         self.initialize_archive()
-        batch_size = 512
+        batch_size = 1024
         child_batch = []
         cell_batch = []
 

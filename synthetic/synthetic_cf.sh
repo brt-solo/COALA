@@ -18,12 +18,12 @@ cd /global/home/hpc5434/MAP-CF/synthetic
 #!/bin/bash
 
 FEATURE_CAT=~/MAP-CF/synthetic/synthetic_feature_categories_action.json
-METHODS=("single_point" "uniform" "sbx")
-MUT_RATES=("None" "0.01" "0.1")
-INIT_POPS=(500 1000)
-ITERS=(2000 5000)
+METHODS=("uniform" "sbx")
+MUT_RATES=("None")
+INIT_POPS=(500 5000 10000)
+ITERS=(1000 10000 50000)
 
-MODELS=("perfect_model" "mlp_model")
+MODELS=("mlp_model")
 
 for MODEL_NAME in "${MODELS[@]}"; do
 
@@ -63,7 +63,15 @@ for MODEL_NAME in "${MODELS[@]}"; do
           fi
 
           echo "Running: $CMD"
+          start_time=$(date +%s)
+
           eval $CMD
+
+          end_time=$(date +%s)
+          elapsed=$((end_time - start_time))
+          echo "⏱️ Completed $OUTPUT in $elapsed seconds"
+          echo ""
+
 
         done
       done

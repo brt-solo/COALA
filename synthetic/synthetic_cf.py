@@ -25,7 +25,7 @@ parser.add_argument("--model_name", type=str, default="model")
 parser.add_argument("--init_pop", type=int, default=1000, help="Initial random population (default=1000)")
 parser.add_argument("--iter", type=int, default=5000, help="Total number of iterations (default=5000)")
 parser.add_argument("--method", type=str, help="Crossover method, can choose from sbx, single_point, uniform")
-parser.add_argument("--mutation_rate", type=str, default=None, help="mutation rate, default is None")
+parser.add_argument("--mutation_rate", type=float, default=None, help="mutation rate, default is None")
 parser.add_argument("--output", type=str, default="model_cf_out", help="directory for storing outputs")
 
 
@@ -43,22 +43,22 @@ class SimpleMLP(nn.Module):
     def __init__(self, input_dim):
         super().__init__()
         self.model = nn.Sequential(
-            nn.Linear(input_dim, 128),
-            nn.ReLU(),
+            nn.Linear(input_dim, 32),
+            nn.Tanh(),
+            nn.Linear(32, 16),
             #nn.Dropout(0.1),
-            nn.Linear(128, 32),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(32, 1)
+            nn.Tanh(),
+            nn.Linear(16, 16),
+            nn.Tanh(),
+            nn.Linear(16, 1)
         )
     def forward(self, x):
         return self.model(x)
 
-
 class PerfectWrapper:
     def __init__(self):
         # Define feature ordering if needed
-        self.feature_names = ['G1', 'G2', 'E1', 'E2', 'N1', 'N2', 'M1', 'M2']
+        self.feature_names = ['G1', 'G2', 'G3', 'E1', 'E2', 'N1', 'N2', 'M1', 'M2']
 
     def predict(self, X):
         # If input is a DataFrame, convert to NumPy in correct order
@@ -67,21 +67,24 @@ class PerfectWrapper:
 
         G1 = X[:, 0]
         G2 = X[:, 1]
-        E1 = X[:, 2]
-        E2 = X[:, 3]
-        N1 = X[:, 4]
-        N2 = X[:, 5]
-        M1 = X[:, 6]
-        M2 = X[:, 7]
+        G3 = X[:, 2]
+        E1 = X[:, 3]
+        E2 = X[:, 4]
+        N1 = X[:, 5]
+        N2 = X[:, 6]
+        M1 = X[:, 7]
+        M2 = X[:, 8]
 
         y = (
+            0.5 * G3 +
             0.7 * E2 +
             0.2 * N1 +
             0.3 * M1 +
-            1.8 * G2 * E1 +
-            1.8 * G1 * N2 * M2
+            + 1.8 * G1 * E1 #interaction between 2 features
+            + 1.8 * G2 * N2 * M2 # higher order interaction
         )
         return y
+
 '''
 model_info = {
     "perfect_model": f"~/MAP-CF/synthetic/perfect_model.pkl",
@@ -133,12 +136,19 @@ if not all(col in ref_df.columns for col in X_train_df.columns):
 # ─────────────────────────────────────────────────────────────
 # 3. Shared MAP-Elites configuration
 # ─────────────────────────────────────────────────────────────
-
+'''
 params = {
     "min": np.array(X_train_df.min()),
     "max": np.array(X_train_df.max()),
     "random_init_batch": args.init_pop
 }
+'''
+params = {
+    "min": np.full(X_train_df.shape[1], -3.0),
+    "max": np.full(X_train_df.shape[1], 3.0),
+    "random_init_batch": args.init_pop
+}
+
 
 #print(params)
 #print("min:", np.array(ref_df.min()), "max:", np.array(ref_df.max()))

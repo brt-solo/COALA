@@ -67,13 +67,24 @@ def plot_cellwise_grid(archive_dict, cell_feature_sets, feature_categories, plot
     return fig
 '''
 
-def plot_cellwise_grid(archive_dict, cell_feature_sets, feature_categories, plot_fn, plot_type_name="Grid", figsize_per_cell=(4, 4), colorbar_label="Predicted outcome", **kwargs):
+def plot_cellwise_grid(
+    archive_dict,
+    cell_feature_sets,
+    feature_categories,
+    plot_fn,
+    plot_type_name="Grid",
+    figsize_per_cell=(4, 4),
+    colorbar_label="Predicted outcome",
+    legend=False,
+    **kwargs
+):
     categories = list(feature_categories.keys())
     n = len(categories)
     fig, axes = plt.subplots(n, n, figsize=(figsize_per_cell[0]*n, figsize_per_cell[1]*n), dpi=300)
     axes = np.atleast_2d(axes)
 
     mappables = []
+    handles_labels = []
 
     for i in range(n):
         for j in range(n):
@@ -93,6 +104,11 @@ def plot_cellwise_grid(archive_dict, cell_feature_sets, feature_categories, plot
             if mappable:
                 mappables.append(mappable)
 
+                # For legend mode, collect handles + labels (if returned)
+                if legend and hasattr(mappable, 'legend_elements'):
+                    handles, labels = mappable.legend_elements()
+                    handles_labels.append((handles, labels))
+    '''
     # Set column labels (top row)
     for i in range(n):
         ax_top = axes[0, i]
@@ -101,7 +117,7 @@ def plot_cellwise_grid(archive_dict, cell_feature_sets, feature_categories, plot
     # Add separate row labels using fig.text instead of modifying subplot y-axis labels
     for j in range(n):
         fig.text(
-            0,  # x-position (near left)
+            -0.5,  # x-position (near left)
             #0.8*(j) / n+0.2,  # y-position (center of the subplot row) - for four cells
             2*(j) / n+0.5, 
             categories[n - 1 - j],
@@ -111,12 +127,30 @@ def plot_cellwise_grid(archive_dict, cell_feature_sets, feature_categories, plot
             rotation=0,
             transform=fig.transFigure
         )
+    '''
 
-    if mappables:
-        cbar = fig.colorbar(mappables[0], ax=axes, orientation='horizontal', fraction=0.02, pad=0.01)
+    if legend and handles_labels:
+        # Flatten handles/labels and deduplicate
+        all_handles = sum((hl[0] for hl in handles_labels), [])
+        all_labels = sum((hl[1] for hl in handles_labels), [])
+        unique = {lbl: h for h, lbl in zip(all_handles, all_labels)}  # deduplicate
+        fig.legend(
+            handles=list(unique.values()),
+            labels=list(unique.keys()),
+            loc='lower center',
+            bbox_to_anchor=(0.5, -0.05), 
+            ncol=5,
+            frameon=True,
+            title="Cluster",
+            fontsize=10,
+            handletextpad=0.4
+        )
+    elif not legend and mappables:
+        cbar_ax = fig.add_axes([0.2, -0.05, 0.6, 0.02])  # Lower and centered
+        cbar = fig.colorbar(mappables[0], cax=cbar_ax, orientation='horizontal')
         cbar.set_label(colorbar_label, fontsize=12)
-    fig.subplots_adjust(wspace=0.3, hspace=0.2)  # Adjust these values as needed
 
+    fig.subplots_adjust(wspace=0.3, hspace=0.2, bottom=0.15)
     return fig
 
 
@@ -214,7 +248,7 @@ def correlation_heatmap_cell(ax, df, cell_key, mutable_features, vmin=-1, vmax=1
 
 
 ############# PCA and K MEAN CLUSTERING PIPELINE FUNCTIONS #########################
-def plot_single_pca(ax, df, cell_key, mutable_features, color_feature, n_components=2, global_vmin=0, global_vmax=1):
+def plot_counterfactuals(ax, df, cell_key, mutable_features, color_feature, n_components=2, global_vmin=0, global_vmax=1):
     if len(mutable_features) < 2 or df.shape[0] < 2:
         ax.axis("off")
         return
@@ -246,6 +280,55 @@ def plot_single_pca(ax, df, cell_key, mutable_features, color_feature, n_compone
     except Exception:
         ax.axis("off")
 
+def plot_by_cluster(ax, df, cell_key, mutable_features, cluster_method, reducer, max_k=5):
+    if df.empty or len(mutable_features) < 2 or df.shape[0] < 3:
+        ax.axis("off")
+        return
+
+    try:
+        # Extract and scale mutable features
+        X = df[mutable_features].values
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+
+        # Edge case: all rows are identical after scaling
+        if np.unique(X_scaled, axis=0).shape[0] == 1:
+            ax.scatter([0], [0], c='blue', s=10)
+            ax.set_title(f"Cell {cell_key} (Identical)")
+            ax.axis('off')
+            return
+
+        if reducer == "PCA":
+            reducer = PCA(n_components=2)
+        elif reducer == "UMAP":
+            reducer = UMAP(n_components=2, random_state=42, n_neighbors=5, min_dist=0.3)
+        else:
+            raise ValueError(f"Unknown dim_reduction method: {reducer}")
+        
+        X_embedded = reducer.fit_transform(X)
+
+        # Cluster in the scaled space
+        if cluster_method=="hierarchal":
+            k, labels, Z = optimal_hclust_k(X_scaled, max_k=max_k)
+        elif cluster_method=="kmeans":
+            k, labels = optimal_clusters(X_embedded, max_k=max_k)
+            labels = labels + 1  # Shift cluster labels to start from 1
+
+        # Scatter plot with cluster-based coloring
+        scatter = ax.scatter(
+            X_embedded[:, 0], X_embedded[:, 1],
+            c=labels,
+            cmap='tab10',
+            alpha=0.7
+        )
+
+        ax.set_xlabel("Component 1")
+        ax.set_ylabel("Component 2")
+        ax.tick_params(left=True, bottom=True, labelleft=True, labelbottom=True)
+        return scatter
+    except Exception as e:
+        ax.axis("off")
+        print(f"Error in cell {cell_key}: {e}")
 
 def eta2_bar_cell_pca_kmeans(ax, df, cell_key, mutable_features, top_n=5, max_clusters=5):
     if df.empty or len(mutable_features) < 2:
@@ -655,7 +738,7 @@ def eta_squared_1d(x, labels):
     return eta_sq
 
 
-def plot_cf_eta2_bar_cell(ax, df, cell_key, mutable_features, top_n=6, max_k=5, verbose=False):
+def plot_cf_eta2_bar_cell(ax, df, cell_key, mutable_features, cluster_method, reducer, top_n=6, max_k=5, verbose=False):
     if df.empty or len(mutable_features) < 2:
         ax.axis("off")
         return
@@ -669,7 +752,21 @@ def plot_cf_eta2_bar_cell(ax, df, cell_key, mutable_features, top_n=6, max_k=5, 
     X_scaled = scaler.fit_transform(X)
 
     try:
-        k, labels, _ = optimal_hclust_k(X_scaled, max_k=max_k)
+        if reducer == "PCA":
+            reducer = PCA(n_components=2)
+        elif reducer == "UMAP":
+            reducer = UMAP(n_components=2, random_state=42, n_neighbors=5, min_dist=0.3)
+        else:
+            raise ValueError(f"Unknown dim_reduction method: {reducer}")
+        X_pca = reducer.fit_transform(X)
+
+        # Cluster in the scaled space
+        if cluster_method=="hierarchal":
+            k, labels, Z = optimal_hclust_k(X_scaled, max_k=max_k)
+        elif cluster_method=="kmeans":
+            k, labels = optimal_clusters(X_pca, max_k=max_k)
+            labels = labels + 1  # Shift cluster labels to start from 1
+
         eta_dict = {}
 
         for feat in mutable_features:
@@ -692,6 +789,7 @@ def plot_cf_eta2_bar_cell(ax, df, cell_key, mutable_features, top_n=6, max_k=5, 
 
         sorted_items = sorted(eta_dict.items(), key=lambda x: -x[1])
         top_feats, top_etas = zip(*sorted_items[:top_n]) if any(eta_dict.values()) else ([], [])
+        ax.set_xlabel('Effect size ($\eta^2$)', fontsize=10)
 
         if top_feats:
             ax.barh(top_feats[::-1], top_etas[::-1])
@@ -759,7 +857,79 @@ def plot_cf_eta2_bar_cell_old(ax, df, cell_key, mutable_features, top_n=5, max_k
 
 
 
-def plot_cf_eta2_bar_constraints_cell(ax, df, cell_key, mutable_features, top_n=5, max_k=5, verbose=False):
+def plot_cf_eta2_bar_constraints_cell(ax, df, cell_key, mutable_features, cluster_method, reducer, top_n=6, max_k=5, verbose=False):
+    if df.empty or len(mutable_features) < 2:
+        ax.axis("off")
+        return
+
+    X = df[mutable_features].values
+    if X.shape[0] < 3:
+        ax.axis("off")
+        return
+    
+    # Constraints = non-mutable columns (not in mutable_features, not metadata columns)
+    constraint_features = [
+        col for col in df.columns 
+        if col not in mutable_features and col not in ['cell', 'individual_id', 'fitness']
+    ]
+    if len(constraint_features) < 2:
+        ax.axis("off")
+        return
+    
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    try:
+        if reducer == "PCA":
+            reducer = PCA(n_components=2)
+        elif reducer == "UMAP":
+            reducer = UMAP(n_components=2, random_state=42, n_neighbors=5, min_dist=0.3)
+        else:
+            raise ValueError(f"Unknown dim_reduction method: {reducer}")
+        X_pca = reducer.fit_transform(X)
+
+        # Cluster in the scaled space
+        if cluster_method=="hierarchal":
+            k, labels, Z = optimal_hclust_k(X_scaled, max_k=max_k)
+        elif cluster_method=="kmeans":
+            k, labels = optimal_clusters(X_pca, max_k=max_k)
+            labels = labels + 1  # Shift cluster labels to start from 1
+
+
+        eta_dict = {}
+
+        for feat in constraint_features:
+            x = df[feat].values
+
+            if np.var(x) < 1e-8:
+                eta_dict[feat] = 0.0
+                continue
+
+            try:
+                eta = eta_squared_1d(x, labels)
+                if np.isnan(eta) or not np.isfinite(eta):
+                    eta = 0.0
+            except Exception as e:
+                if verbose:
+                    print(f"[WARN] {feat}: {e}")
+                eta = 0.0
+
+            eta_dict[feat] = eta
+
+        sorted_items = sorted(eta_dict.items(), key=lambda x: -x[1])
+        top_feats, top_etas = zip(*sorted_items[:top_n]) if any(eta_dict.values()) else ([], [])
+
+        if top_feats:
+            ax.barh(top_feats[::-1], top_etas[::-1])
+            ax.set_xlim(0, 1)
+        else:
+            ax.axis("off")
+        ax.set_xlabel('Effect size ($\eta^2$)', fontsize=10)
+    except Exception as e:
+        print(f"[ERROR] Cell {cell_key} → {e}")
+        ax.axis("off")
+
+def plot_cf_eta2_bar_constraints_cell_old(ax, df, cell_key, mutable_features, top_n=5, max_k=5, verbose=False):
     if df.empty or len(mutable_features) < 2:
         ax.axis("off")
         return
@@ -824,14 +994,8 @@ def plot_cf_eta2_bar_constraints_cell(ax, df, cell_key, mutable_features, top_n=
         ax.axis("off")
 
 
-def plot_cf_eta2_bar_constraints_cell_old(ax, df, cell_key, mutable_features, top_n=5, max_k=5):
+def plot_cf_meanvalue_heatmap_cell(ax, df, cell_key, cluster_method, mutable_features, reducer, max_k=5):
     if df.empty or len(mutable_features) < 2:
-        ax.axis("off")
-        return
-
-    # Constraints = non-mutable columns (not in mutable_features, not "cell" or "individual_id")
-    constraint_features = [col for col in df.columns if col not in mutable_features and col not in ['cell', 'individual_id', 'fitness']]
-    if len(constraint_features) < 2:
         ax.axis("off")
         return
 
@@ -839,67 +1003,35 @@ def plot_cf_eta2_bar_constraints_cell_old(ax, df, cell_key, mutable_features, to
     if X.shape[0] < 3:
         ax.axis("off")
         return
+
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
-    try:
-        # Cluster based on mutable features
+    if reducer == "PCA":
+        reducer = PCA(n_components=2)
+    elif reducer == "UMAP":
+        reducer = UMAP(n_components=2, random_state=42, n_neighbors=5, min_dist=0.3)
+    else:
+        raise ValueError(f"Unknown dim_reduction method: {reducer}")
+    X_pca = reducer.fit_transform(X)
+
+    # Cluster in the scaled space
+    if cluster_method=="hierarchal":
         k, labels, Z = optimal_hclust_k(X_scaled, max_k=max_k)
-
-        # Compute eta squared for constraint features
-        from sklearn.feature_selection import f_classif
-
-        X_constraints_raw = df[constraint_features]
-        # Filter out constant features
-        variances = X_constraints_raw.var(axis=0)
-        valid_mask = variances > 1e-8
-        X_constraints = X_constraints_raw.loc[:, valid_mask]
-
-        if X_constraints.shape[1] == 0:
-            ax.axis("off")
-            return
-
-        # Safe f_classif call
-        F_vals, _ = f_classif(X_constraints.values, labels)
-        eta_sq = F_vals / (F_vals + X_constraints.shape[0] - X_constraints.shape[1] - 1)
-        eta_sq = np.nan_to_num(eta_sq, nan=0.0)  # Replace NaNs with 0
-
-        # Select top constraint features
-        constraint_features_filtered = X_constraints.columns.tolist()
-        sorted_idx = np.argsort(-eta_sq)
-        top_features = np.array(constraint_features_filtered)[sorted_idx[:top_n]]
-        top_eta = eta_sq[sorted_idx[:top_n]]
-
-
-
-        # Plot barplot
-        ax.barh(top_features[::-1], top_eta[::-1])
-        ax.set_xlim(0, 1)
-    except Exception:
-        ax.axis("off")
-
-
-def plot_cf_meanvalue_heatmap_cell(ax, df, cell_key, mutable_features, max_k=5):
-    if df.empty or len(mutable_features) < 2:
-        ax.axis("off")
-        return
-
-    X = df[mutable_features].values
-    if X.shape[0] < 3:
-        ax.axis("off")
-        return
-
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    k, labels, Z = optimal_hclust_k(X_scaled, max_k=max_k)
+    elif cluster_method=="kmeans":
+        k, labels = optimal_clusters(X_pca, max_k=max_k)
+        labels = labels + 1  # Shift cluster labels to start from 1
 
     df_tmp = df.copy()
     df_tmp['cluster'] = labels
     mean_by_cluster = df_tmp.groupby('cluster')[mutable_features].mean()
 
     sns.heatmap(mean_by_cluster, cmap='coolwarm', center=0, annot=True, fmt=".2f", ax=ax)
+    ax.set_xlabel("Mutable features", fontsize=10)
+    ax.set_ylabel("Cluster", fontsize=10)
+
     #ax.set_title(f"Mean Values per Cluster\nCell {cell_key}")
 
-def plot_cf_meanvalue_heatmap_constraints_cell(ax, df, cell_key, mutable_features, max_k=5):
+def plot_cf_meanvalue_heatmap_constraints_cell(ax, df, cell_key, cluster_method, mutable_features, reducer, max_k=5):
     if df.empty or len(mutable_features) < 2:
         ax.axis("off")
         return
@@ -918,7 +1050,20 @@ def plot_cf_meanvalue_heatmap_constraints_cell(ax, df, cell_key, mutable_feature
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
     try:
-        k, labels, Z = optimal_hclust_k(X_scaled, max_k=max_k)
+        if reducer == "PCA":
+            reducer = PCA(n_components=2)
+        elif reducer == "UMAP":
+            reducer = UMAP(n_components=2, random_state=42, n_neighbors=5, min_dist=0.3)
+        else:
+            raise ValueError(f"Unknown dim_reduction method: {reducer}")
+        X_pca = reducer.fit_transform(X)
+
+        # Cluster in the scaled space
+        if cluster_method=="hierarchal":
+            k, labels, Z = optimal_hclust_k(X_scaled, max_k=max_k)
+        elif cluster_method=="kmeans":
+            k, labels = optimal_clusters(X_pca, max_k=max_k)
+            labels = labels + 1  # Shift cluster labels to start from 1
 
         # Add cluster label to df and compute mean constraints per cluster
         df_tmp = df.copy()
@@ -928,6 +1073,9 @@ def plot_cf_meanvalue_heatmap_constraints_cell(ax, df, cell_key, mutable_feature
         sns.heatmap(mean_by_cluster, cmap='coolwarm', center=0, annot=True, fmt=".2f", ax=ax)
         #ax.set_title(f"Constraint Means\nCell {cell_key}", fontsize=8)
         ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right")
+        ax.set_xlabel("Constraint features", fontsize=10)
+        ax.set_ylabel("Cluster", fontsize=10)
+
     except Exception:
         ax.axis("off")
 
@@ -977,7 +1125,7 @@ def plot_cf_kde_cell(ax, df, cell_key, mutable_features, feature, max_k=5, min_v
 
 
 
-def optimal_clusters(X, max_clusters=5):
+def optimal_clusters(X, max_k=5):
     """Determines the optimal number of clusters using silhouette score."""
     if X.shape[0] < 3:
         return 1, -1  # Not enough samples
@@ -985,15 +1133,16 @@ def optimal_clusters(X, max_clusters=5):
     best_k = 2
     best_score = -1
 
-    for k in range(2, min(max_clusters, X.shape[0]) + 1):
+    for k in range(2, min(max_k, X.shape[0]) + 1):
         kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
         labels = kmeans.fit_predict(X)
         score = silhouette_score(X, labels) if k > 1 else -1
         if score > best_score:
             best_score = score
             best_k = k
+            best_labels=labels
 
-    return best_k, best_score
+    return best_k, best_labels
 
 
 def optimal_hclust_k(X, max_k=5, method='ward', metric='euclidean'):
