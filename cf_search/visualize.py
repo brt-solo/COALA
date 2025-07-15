@@ -29,43 +29,72 @@ try:
 except ImportError:
     use_wes_palette = False
 
-'''
-
-def plot_cellwise_grid(archive_dict, cell_feature_sets, feature_categories, plot_fn, plot_type_name="Grid", figsize_per_cell=(4, 4), **kwargs):
+def fused_similarity_network(
+    archive_dict,
+    cell_feature_sets,
+    feature_categories,
+    test_data,
+    color_feature
+):
+    data_views = []
     categories = list(feature_categories.keys())
     n = len(categories)
-    fig, axes = plt.subplots(n, n, figsize=(figsize_per_cell[0]*n, figsize_per_cell[1]*n), dpi=300)
-    axes = np.atleast_2d(axes)
-
+    #go through each cell and make a distance matrix
     for i in range(n):
         for j in range(n):
-            ax = axes[n - 1 - j, i]
             cell_key = (i, j)
-            if cell_key not in cell_feature_sets:
-                ax.axis("off")
-                continue
 
             df = extract_cell_data(archive_dict, cell_key)
-            if df.empty:
-                ax.axis("off")
-                continue
 
             mutable_features = cell_feature_sets[cell_key]
-            plot_fn(ax, df, cell_key, mutable_features=mutable_features, **kwargs)
+            #print(f"{cell_key} columns: {df.columns.tolist()}")
+            #print(f"{cell_key}: {mutable_features}")
+            missing = [f for f in mutable_features if f not in df.columns]
+            if missing:
+                print(f"[{cell_key}] Missing features: {missing}")
+                print(f"Available in df: {df.columns.tolist()}")
+                continue  # skip this cell
+            X = df[mutable_features].values
+            data_views.append(X)
+
+    # Now fuse the similarity networks
+    affinities = snf.make_affinity(data_views, metric='euclidean', K=5, mu=0.5)
+    fused_affinity = snf.snf(affinities)
+
+    G = nx.Graph()
+    n = fused_affinity.shape[0]
 
     for i in range(n):
-        # Stack the new title above the existing title (if any)
-        current_title = axes[0, i].get_title()
-        new_title = f"{categories[i]}\n{current_title}" if current_title else categories[i]
-        axes[0, i].set_title(new_title, fontsize=10, pad=10)
+        G.add_node(i, color=test_data[color_feature].iloc[i])
 
-        axes[i, 0].set_ylabel(categories[n - 1 - i], fontsize=12, rotation=0, ha='right', va='center')
-    
+    K = 5  # number of neighbors
+    for i in range(n):
+        # Get indices of top K neighbors (excluding self)
+        top_k = np.argsort(fused_affinity[i])[::-1][1:K+1]
+        for j in top_k:
+            weight = fused_affinity[i, j]
+            if weight > 0:
+                G.add_edge(i, j, weight=weight)
 
-    fig.subplots_adjust(hspace=0.2, wspace=0.6)
-    fig.suptitle(plot_type_name, fontsize=16)
+    fig, ax = plt.subplots(figsize=(8, 6), dpi=500)
+    pos = nx.spring_layout(G, seed=42)
+    edge_weights = np.array([G[u][v]['weight'] for u, v in G.edges])
+
+    norm = plt.Normalize(vmin=-1, vmax=1)
+    node_colors = [plt.cm.viridis(norm(G.nodes[i]['color'])) for i in G.nodes]
+
+    # Normalize edge weights
+    edge_norm = plt.Normalize(vmin=edge_weights.min(), vmax=edge_weights.max())
+    edge_colors = [plt.cm.Blues(edge_norm(w)) for w in edge_weights]
+
+    nx.draw(
+        G, pos, ax=ax, with_labels=False,
+        node_color=node_colors, node_size=50,
+        edge_color=edge_colors, edge_cmap=plt.cm.Blues,
+        width=0.5  # Use manually normalized colors
+    )
     return fig
-'''
+
 
 def plot_cellwise_grid(
     archive_dict,
@@ -76,6 +105,16 @@ def plot_cellwise_grid(
     figsize_per_cell=(4, 4),
     colorbar_label="Predicted outcome",
     legend=False,
+    wspace=0.5,
+    hspace=0.5,
+    bottom=0.15,
+    top=0.9,
+    left=0.1,
+    right=0.95,
+    title_fontsize=24,
+    rowlabel_fontsize=24,
+    rowlabel_offset=0.05,
+    rowlabel_ybias=0.2,
     **kwargs
 ):
     categories = list(feature_categories.keys())
@@ -112,23 +151,27 @@ def plot_cellwise_grid(
     # Set column labels (top row)
     for i in range(n):
         ax_top = axes[0, i]
-        ax_top.set_title(categories[i], fontsize=12, pad=10)
+        ax_top.set_title(categories[i], fontsize=title_fontsize, pad=10)
+
 
     # Add separate row labels using fig.text instead of modifying subplot y-axis labels
+    row_height = 1.0 / (n+1)  # height of each subplot row
     for j in range(n):
+        y_pos = bottom + row_height * (j) + row_height*0.4  # center of each row
         fig.text(
-            -0.5,  # x-position (near left)
-            #0.8*(j) / n+0.2,  # y-position (center of the subplot row) - for four cells
-            2*(j) / n+0.5, 
-            categories[n - 1 - j],
+            rowlabel_offset,
+            y_pos,
+            #categories[n - 1 - j],
+            categories[j],
             ha='right',
             va='center',
-            fontsize=12,
+            fontsize=rowlabel_fontsize,
             rotation=0,
             transform=fig.transFigure
         )
-    '''
 
+    '''
+    '''
     if legend and handles_labels:
         # Flatten handles/labels and deduplicate
         all_handles = sum((hl[0] for hl in handles_labels), [])
@@ -138,19 +181,21 @@ def plot_cellwise_grid(
             handles=list(unique.values()),
             labels=list(unique.keys()),
             loc='lower center',
-            bbox_to_anchor=(0.5, -0.05), 
+            bbox_to_anchor=(0.5, -0.01), 
             ncol=5,
             frameon=True,
             title="Cluster",
-            fontsize=10,
+            fontsize=16,
             handletextpad=0.4
         )
-    elif not legend and mappables:
-        cbar_ax = fig.add_axes([0.2, -0.05, 0.6, 0.02])  # Lower and centered
+    '''
+    if not legend and mappables:
+        cbar_ax = fig.add_axes([0.2, -0.1, 0.6, 0.02])  # Lower Y position
+        #cbar_ax = fig.add_axes([0.96, 0.15, 0.02, 0.7])  # Right side, vertical
         cbar = fig.colorbar(mappables[0], cax=cbar_ax, orientation='horizontal')
-        cbar.set_label(colorbar_label, fontsize=12)
+        cbar.set_label(colorbar_label, fontsize=20)
 
-    fig.subplots_adjust(wspace=0.3, hspace=0.2, bottom=0.15)
+    fig.subplots_adjust(wspace=wspace, hspace=hspace, bottom=bottom, top=top, left=left, right=right)
     return fig
 
 
@@ -246,6 +291,209 @@ def correlation_heatmap_cell(ax, df, cell_key, mutable_features, vmin=-1, vmax=1
         print(f"[ERROR] Cell {cell_key} → {e}")
         ax.axis("off")
 
+############# Similarity network of cells ##########################################
+from snf import compute
+import snf
+from scipy.spatial.distance import pdist, squareform
+import networkx as nx
+
+def plot_similarity(ax, df, cell_key, mutable_features, color_feature, n_components=2, global_vmin=0, global_vmax=1):
+    if len(mutable_features) < 2 or df.shape[0] < 2:
+        ax.axis("off")
+        return
+
+    try:
+        X = df[mutable_features].copy()
+        dist = squareform(pdist(X, metric='euclidean'))
+
+        # Use SNF to compute the similarity (affinity) matrix
+        similarity = snf.make_affinity(X, metric='euclidean', K=20, mu=0.5)  # K: neighbors, mu: scaling factor
+
+        G = nx.Graph()
+        n = similarity.shape[0]
+
+        for i in range(n):
+            G.add_node(i, color=df[color_feature].iloc[i])
+
+        K = 5  # number of neighbors
+        for i in range(n):
+            # Get indices of top K neighbors (excluding self)
+            top_k = np.argsort(similarity[i])[::-1][1:K+1]
+            for j in top_k:
+                weight = similarity[i, j]
+                if weight > 0:
+                    G.add_edge(i, j, weight=weight)
+
+
+        pos = nx.spring_layout(G, seed=42)
+        edge_weights = [G[u][v]['weight'] for u, v in G.edges]
+
+        norm = plt.Normalize(vmin=global_vmin, vmax=global_vmax)
+        node_colors = [plt.cm.viridis(norm(G.nodes[i]['color'])) for i in G.nodes]
+
+        # Normalize edge weights
+        edge_norm = plt.Normalize(vmin=np.min(edge_weights), vmax=np.max(edge_weights))
+        edge_colors = [plt.cm.inferno(edge_norm(w)) for w in edge_weights]
+
+        nx.draw(
+            G, pos, ax=ax, with_labels=False,
+            node_color=node_colors, node_size=50,
+            edge_color=edge_colors, edge_cmap=plt.cm.inferno,
+            width=0.5  # Use manually normalized colors
+        )
+
+
+    except Exception as e:
+        print(f"Error in plot_similarity (SNF): {e}")
+        ax.axis("off")
+
+
+def plot_similarity_manual(ax, df, cell_key, mutable_features, color_feature, n_components=2, global_vmin=0, global_vmax=1):
+    if len(mutable_features) < 2 or df.shape[0] < 2:
+        ax.axis("off")
+        return
+
+    try:
+        # Avoid modifying original df
+        X = df[mutable_features].copy()
+
+        # Calculate Euclidean distance
+        dist = squareform(pdist(X, metric='euclidean'))
+
+        # Estimate sigma — average pairwise distance is a common heuristic
+        sigma = np.mean(dist)
+
+        # Gaussian similarity kernel
+        similarity = np.exp(-dist**2 / (2 * sigma**2))
+
+        G = nx.Graph()
+        n = similarity.shape[0]
+
+        # Add nodes (color stored as attribute)
+        for i in range(n):
+            G.add_node(i, color=df[color_feature].iloc[i])
+
+        # Add edges for top-k similar neighbors
+        k = min(5, n - 1)  # avoid index error when n < 5
+        for i in range(n):
+            top_k = np.argsort(similarity[i])[::-1][1:k+1]
+            for j in top_k:
+                G.add_edge(i, j, weight=similarity[i, j])
+
+        # Layout and draw
+        pos = nx.spring_layout(G, seed=42)
+        edge_weights = [G[u][v]['weight'] for u, v in G.edges]
+
+        # Normalize node colors
+        norm = plt.Normalize(vmin=global_vmin, vmax=global_vmax)
+        node_colors = [plt.cm.viridis(norm(G.nodes[i]['color'])) for i in G.nodes]
+        ax.clear()
+        nx.draw(
+            G, pos, ax=ax, with_labels=False,
+            node_color=node_colors, node_size=50,
+            edge_color=edge_weights, edge_cmap=plt.cm.Blues
+        )
+
+    except Exception as e:
+        print(f"Error in plot_similarity: {e}")
+        ax.axis("off")
+
+from sklearn.cluster import SpectralClustering
+def plot_similarity_by_cluster(ax, df, cell_key, mutable_features, cluster_method, reducer, max_k=5):
+    if df.empty or len(mutable_features) < 2 or df.shape[0] < 3:
+        ax.axis("off")
+        return
+
+    try:
+        # Extract and scale mutable features
+        X = df[mutable_features].values
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+
+
+
+        # For plotting into 2D
+        if reducer == "PCA":
+            reducer_model = PCA(n_components=2)
+            X_embedded = reducer_model.fit_transform(X)
+            X_plotting = X_embedded
+        elif reducer == "UMAP":
+            reducer_model = UMAP(n_components=2, random_state=42, n_neighbors=5, min_dist=0.3)
+            X_embedded = reducer_model.fit_transform(X)
+            X_plotting = X_embedded
+        else:
+            X_embedded = X  # No dimensionality reduction
+            reducer_model = PCA(n_components=2)
+            X_plotting = reducer_model.fit_transform(X) #for plotting still reduce dimensionality
+
+        # Clustering
+        if cluster_method == "hierarchal":
+            k, labels, Z = optimal_hclust_k(X, max_k=max_k)
+        else:  # e.g., kmeans
+            k, labels = optimal_clusters(X_embedded, max_k=max_k)
+            labels = labels + 1
+
+
+        X = df[mutable_features]
+        # Calculate Euclidean distance
+        dist = squareform(pdist(X, metric='euclidean'))
+
+        # Estimate sigma — average pairwise distance is a common heuristic
+        sigma = np.mean(dist)
+
+        # Gaussian similarity kernel
+        similarity = np.exp(-dist**2 / (2 * sigma**2))
+
+        # Edge case: all rows are identical after scaling
+        if np.unique(X_scaled, axis=0).shape[0] == 1:
+            ax.scatter([0], [0], c='blue', s=10)
+            ax.set_title(f"Cell {cell_key} (Identical)")
+            ax.axis('off')
+            return
+        
+
+        n_clusters = 4  # or however many clusters you expect
+
+        spectral = SpectralClustering(
+            n_clusters=n_clusters,
+            affinity='precomputed',  # because we're passing a similarity matrix
+            assign_labels='kmeans',  # or 'discretize'
+            random_state=42
+        )
+
+        labels = spectral.fit_predict(similarity)
+
+
+        G = nx.Graph()
+        n = similarity.shape[0]
+
+        # Add nodes (color stored as attribute)
+        for i in range(n):
+            G.add_node(i, color=labels)
+
+        # Add edges for top-k similar neighbors
+        k = min(5, n - 1)  # avoid index error when n < 5
+        for i in range(n):
+            top_k = np.argsort(similarity[i])[::-1][1:k+1]
+            for j in top_k:
+                G.add_edge(i, j, weight=similarity[i, j])
+
+        # Layout and draw
+        pos = nx.spring_layout(G, seed=42)
+        edge_weights = [G[u][v]['weight'] for u, v in G.edges]
+
+        # Normalize node colors
+        #norm = plt.Normalize(vmin=global_vmin, vmax=global_vmax)
+        #node_colors = [plt.cm.viridis(norm(G.nodes[i]['color'])) for i in G.nodes]
+
+        nx.draw(
+            G, pos, ax=ax, with_labels=False,
+            node_color=labels, node_size=50,
+            edge_color=edge_weights, edge_cmap=plt.cm.Blues
+        )
+    except Exception as e:
+        ax.axis("off")
+        print(f"Error in cell {cell_key}: {e}")
 
 ############# PCA and K MEAN CLUSTERING PIPELINE FUNCTIONS #########################
 def plot_counterfactuals(ax, df, cell_key, mutable_features, color_feature, n_components=2, global_vmin=0, global_vmax=1):
@@ -269,12 +517,15 @@ def plot_counterfactuals(ax, df, cell_key, mutable_features, color_feature, n_co
             vmax=global_vmax,
             alpha=0.7
         )
-        ax.set_xlabel("")
-        ax.set_ylabel("")
         #ax.set_xlim(-5, 5)
         #ax.set_ylim(-5, 5)
 
         # Ensure ticks and labels are shown
+        ax.set_xlabel("PC1", fontsize=20)
+        ax.set_ylabel("PC2", fontsize=20)
+        ax.tick_params(left=True, bottom=True, labelleft=True, labelbottom=True)
+        ax.tick_params(axis='x', labelsize=16)  # Increase x-axis tick label size
+        ax.tick_params(axis='y', labelsize=16)  # Increase y-axis tick label size
         ax.tick_params(left=True, bottom=True, labelleft=True, labelbottom=True)
         return scatter
     except Exception:
@@ -298,128 +549,60 @@ def plot_by_cluster(ax, df, cell_key, mutable_features, cluster_method, reducer,
             ax.axis('off')
             return
 
+        # For plotting into 2D
         if reducer == "PCA":
-            reducer = PCA(n_components=2)
+            reducer_model = PCA(n_components=2)
+            X_embedded = reducer_model.fit_transform(X)
+            X_plotting = X_embedded
         elif reducer == "UMAP":
-            reducer = UMAP(n_components=2, random_state=42, n_neighbors=5, min_dist=0.3)
+            reducer_model = UMAP(n_components=2, random_state=42, n_neighbors=5, min_dist=0.3)
+            X_embedded = reducer_model.fit_transform(X)
+            X_plotting = X_embedded
         else:
-            raise ValueError(f"Unknown dim_reduction method: {reducer}")
-        
-        X_embedded = reducer.fit_transform(X)
+            X_embedded = X  # No dimensionality reduction
+            reducer_model = PCA(n_components=2)
+            X_plotting = reducer_model.fit_transform(X) #for plotting still reduce dimensionality
 
-        # Cluster in the scaled space
-        if cluster_method=="hierarchal":
-            k, labels, Z = optimal_hclust_k(X_scaled, max_k=max_k)
-        elif cluster_method=="kmeans":
+        # Clustering
+        if cluster_method == "hierarchal":
+            k, labels, Z = optimal_hclust_k(X, max_k=max_k)
+        else:  # e.g., kmeans
             k, labels = optimal_clusters(X_embedded, max_k=max_k)
-            labels = labels + 1  # Shift cluster labels to start from 1
+            labels = labels + 1
+
 
         # Scatter plot with cluster-based coloring
         scatter = ax.scatter(
-            X_embedded[:, 0], X_embedded[:, 1],
+            X_plotting[:, 0], X_plotting[:, 1],
             c=labels,
             cmap='tab10',
-            alpha=0.7
+            alpha=0.7,
+            s=60
         )
-
-        ax.set_xlabel("Component 1")
-        ax.set_ylabel("Component 2")
+        # Add legend
+        unique_clusters = np.unique(labels)
+        handles = [
+            plt.Line2D([], [], marker='o', linestyle='', 
+                       color=scatter.cmap(scatter.norm(i)), 
+                       label=f'Cluster {i}')
+            for i in unique_clusters
+        ]
+        ''''''
+        ax.legend(handles=handles, title='Cluster', 
+                  bbox_to_anchor=(0.6, 1), loc='upper left', 
+                  fontsize=12, title_fontsize=12)
+        
+        ax.set_xlabel("PC1", fontsize=20)
+        ax.set_ylabel("PC2", fontsize=20)
         ax.tick_params(left=True, bottom=True, labelleft=True, labelbottom=True)
+        ax.tick_params(axis='x', labelsize=16)  # Increase x-axis tick label size
+        ax.tick_params(axis='y', labelsize=16)  # Increase y-axis tick label size
         return scatter
     except Exception as e:
         ax.axis("off")
         print(f"Error in cell {cell_key}: {e}")
 
-def eta2_bar_cell_pca_kmeans(ax, df, cell_key, mutable_features, top_n=5, max_clusters=5):
-    if df.empty or len(mutable_features) < 2:
-        ax.axis("off")
-        return
 
-    X = df[mutable_features].values
-    if X.shape[0] < 3:
-        ax.axis("off")
-        return
-
-    try:
-        # PCA + KMeans
-        pca = PCA(n_components=min(2, X.shape[1]))
-        X_pca = pca.fit_transform(X)
-
-        from cf_search.visualize import optimal_clusters
-        k, _ = optimal_clusters(X_pca, max_clusters=max_clusters)
-        kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-        labels = kmeans.fit_predict(X_pca)
-
-        # Eta squared (η²)
-        F_vals, _ = f_classif(X, labels)
-        df_within = X.shape[0] - X.shape[1] - 1
-        if df_within <= 0:
-            ax.axis("off")
-            return
-
-        eta_sq = F_vals / (F_vals + df_within)
-        valid_mask = np.isfinite(eta_sq)
-        if not np.any(valid_mask):
-            ax.axis("off")
-            return
-
-        eta_sq = eta_sq[valid_mask]
-        filtered_feats = np.array(mutable_features)[valid_mask]
-
-        sorted_idx = np.argsort(-eta_sq)
-        top_feats = filtered_feats[sorted_idx][:top_n]
-        top_eta = eta_sq[sorted_idx][:top_n]
-
-        ax.barh(top_feats[::-1], top_eta[::-1])
-        ax.set_xlim(0, 1)
-    except Exception as e:
-        print(f"[ERROR] Cell {cell_key} → {e}")
-        ax.axis("off")
-
-def eta2_bar_constraints_cell_pca_kmeans(ax, df, cell_key, mutable_features, top_n=5, max_clusters=5):
-    if df.empty or len(mutable_features) < 2:
-        ax.axis("off")
-        return
-
-    constraint_features = [col for col in df.columns if col not in mutable_features and col not in ['cell', 'individual_id', 'fitness']]
-    if len(constraint_features) < 2:
-        ax.axis("off")
-        return
-
-    X = df[mutable_features].values
-    if X.shape[0] < 3:
-        ax.axis("off")
-        return
-
-    try:
-        # PCA + KMeans
-        pca = PCA(n_components=min(2, X.shape[1]))
-        X_pca = pca.fit_transform(X)
-
-        from cf_search.visualize import optimal_clusters
-        k, _ = optimal_clusters(X_pca, max_clusters=max_clusters)
-        kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-        labels = kmeans.fit_predict(X_pca)
-
-        X_constraints = df[constraint_features].values
-        df_within = X_constraints.shape[0] - X_constraints.shape[1] - 1
-        if df_within <= 0:
-            ax.axis("off")
-            return
-
-        F_vals, _ = f_classif(X_constraints, labels)
-        eta_sq = F_vals / (F_vals + df_within)
-        eta_sq = np.clip(eta_sq, 0, 1)
-
-        sorted_idx = np.argsort(-eta_sq)
-        top_features = np.array(constraint_features)[sorted_idx[:top_n]]
-        top_eta = eta_sq[sorted_idx[:top_n]]
-
-        ax.barh(top_features[::-1], top_eta[::-1])
-        ax.set_xlim(0, 1)
-    except Exception as e:
-        print(f"[ERROR] Cell {cell_key} → {e}")
-        ax.axis("off")
 
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
@@ -428,7 +611,7 @@ from sklearn.preprocessing import StandardScaler
 import numpy as np
 import pandas as pd
 
-def tree_constraints_to_cluster_cell_pca_kmeans(ax, df, cell_key, mutable_features, top_n=5, max_clusters=5, max_depth=3):
+def tree_constraints_to_cluster_kmeans(ax, df, cell_key, mutable_features, max_k=5, max_depth=3):
     """
     For a single cell:
     - Cluster the counterfactuals by PCA of mutable features.
@@ -440,7 +623,6 @@ def tree_constraints_to_cluster_cell_pca_kmeans(ax, df, cell_key, mutable_featur
     - df: DataFrame for one cell
     - cell_key: (i,j) cell ID
     - mutable_features: list of mutable feature names
-    - top_n: unused here, but consistent API with η² version
     - max_clusters: number of clusters for KMeans
     - max_depth: max tree depth
     """
@@ -463,15 +645,14 @@ def tree_constraints_to_cluster_cell_pca_kmeans(ax, df, cell_key, mutable_featur
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
     try:
+        '''
         # Step 1: Cluster using PCA + KMeans
         pca = PCA(n_components=min(2, X.shape[1]))
         X_pca = pca.fit_transform(X_scaled)
-
+        '''
         from cf_search.visualize import optimal_clusters
-        k, _ = optimal_clusters(X_pca, max_clusters=max_clusters)
-        kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-        labels = kmeans.fit_predict(X_pca)
-
+        k, labels = optimal_clusters(X, max_k=max_k) #use unscaled counterfactuals to preserve differences
+        labels = labels+1
         # Step 2: Train decision tree on constraint features
         X_constraints = df[constraint_features]
         valid_idx = X_constraints.dropna().index
@@ -499,10 +680,12 @@ def tree_constraints_to_cluster_cell_pca_kmeans(ax, df, cell_key, mutable_featur
             filled=True,
             rounded=True,
             ax=ax,
-            fontsize=2,
-            precision=2
+            fontsize=10,
+            precision=2,
+            label="root"  # This shows only the split condition and Gini index
         )
-        ax.set_title(f"Tree {cell_key} (acc={mean_accuracy:.2f})")
+
+        #ax.set_title(f"Tree {cell_key} (acc={mean_accuracy:.2f})")
 
     except Exception as e:
         print(f"[ERROR] Cell {cell_key} → {e}")
@@ -647,33 +830,6 @@ def plot_cf_clustermap_cell(ax, df, cell_key, mutable_features):
 
 
 
-def plot_cf_umap_cell_clusters(ax, df, cell_key, mutable_features):
-    if df.empty or len(mutable_features) < 2:
-        ax.axis("off")
-        return
-
-    X = df[mutable_features].values
-    if X.shape[0] < 3:
-        ax.axis("off")
-        return
-
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    if np.unique(X_scaled, axis=0).shape[0] == 1:
-        ax.scatter([0], [0], c='blue', s=10)
-        ax.set_title(f"Cell {cell_key} (Identical)")
-        ax.axis('off')
-        return
-
-    umap_model = UMAP(n_components=2, random_state=42, n_neighbors=2, min_dist=0.2, metric="euclidean")
-    X_umap = umap_model.fit_transform(X_scaled)
-
-    k, labels, Z = optimal_hclust_k(X_scaled, max_k=5)
-
-    ax.scatter(X_umap[:, 0], X_umap[:, 1], c=labels, cmap='tab10', s=10, alpha=0.7)
-    #ax.set_title(f"Cell {cell_key}")
-    ax.tick_params(left=True, bottom=True, labelleft=True, labelbottom=True)
-
 
 def plot_cf_umap_cell(ax, df, cell_key, mutable_features, color_feature=None, global_vmin=None, global_vmax=None):
     if df.empty or len(mutable_features) < 2:
@@ -737,6 +893,16 @@ def eta_squared_1d(x, labels):
     eta_sq = ss_between / ss_total
     return eta_sq
 
+from scipy.stats import f
+
+def eta2_threshold_from_alpha(alpha, n_samples, n_clusters):
+    df_between = n_clusters - 1
+    df_within = n_samples - n_clusters
+    if df_between <= 0 or df_within <= 0:
+        return 1.0  # skip: can't compute
+    f_crit = f.ppf(1 - alpha, df_between, df_within)
+    eta2_thresh = (f_crit * df_between) / (f_crit * df_between + df_within)
+    return eta2_thresh
 
 def plot_cf_eta2_bar_cell(ax, df, cell_key, mutable_features, cluster_method, reducer, top_n=6, max_k=5, verbose=False):
     if df.empty or len(mutable_features) < 2:
@@ -752,20 +918,22 @@ def plot_cf_eta2_bar_cell(ax, df, cell_key, mutable_features, cluster_method, re
     X_scaled = scaler.fit_transform(X)
 
     try:
+        # For plotting into 2D
         if reducer == "PCA":
-            reducer = PCA(n_components=2)
+            reducer_model = PCA(n_components=2)
+            X_embedded = reducer_model.fit_transform(X)
         elif reducer == "UMAP":
-            reducer = UMAP(n_components=2, random_state=42, n_neighbors=5, min_dist=0.3)
+            reducer_model = UMAP(n_components=2, random_state=42, n_neighbors=5, min_dist=0.3)
+            X_embedded = reducer_model.fit_transform(X)
         else:
-            raise ValueError(f"Unknown dim_reduction method: {reducer}")
-        X_pca = reducer.fit_transform(X)
+            X_embedded = X  # No dimensionality reduction
 
-        # Cluster in the scaled space
-        if cluster_method=="hierarchal":
-            k, labels, Z = optimal_hclust_k(X_scaled, max_k=max_k)
-        elif cluster_method=="kmeans":
-            k, labels = optimal_clusters(X_pca, max_k=max_k)
-            labels = labels + 1  # Shift cluster labels to start from 1
+        # Clustering
+        if cluster_method == "hierarchal":
+            k, labels, Z = optimal_hclust_k(X, max_k=max_k)
+        else:  # e.g., kmeans
+            k, labels = optimal_clusters(X_embedded, max_k=max_k)
+            labels = labels + 1
 
         eta_dict = {}
 
@@ -786,11 +954,18 @@ def plot_cf_eta2_bar_cell(ax, df, cell_key, mutable_features, cluster_method, re
                 eta = 0.0
 
             eta_dict[feat] = eta
+        n_samples = X.shape[0]
+        n_clusters = len(np.unique(labels))
+        eta_thresh = eta2_threshold_from_alpha(0.05, n_samples, n_clusters)
+
+        # Draw the line
+        ax.axvline(eta_thresh, color='red', linestyle='--', linewidth=1.5)
 
         sorted_items = sorted(eta_dict.items(), key=lambda x: -x[1])
         top_feats, top_etas = zip(*sorted_items[:top_n]) if any(eta_dict.values()) else ([], [])
-        ax.set_xlabel('Effect size ($\eta^2$)', fontsize=10)
-
+        ax.set_xlabel('$\eta^2$', fontsize=20)
+        ax.tick_params(axis='x', labelsize=20)  # Increase x-axis tick label size
+        ax.tick_params(axis='y', labelsize=20)  # Increase y-axis tick label size
         if top_feats:
             ax.barh(top_feats[::-1], top_etas[::-1])
             ax.set_xlim(0, 1)
@@ -803,57 +978,6 @@ def plot_cf_eta2_bar_cell(ax, df, cell_key, mutable_features, cluster_method, re
 
 
 
-
-
-def plot_cf_eta2_bar_cell_old(ax, df, cell_key, mutable_features, top_n=5, max_k=5):
-    if df.empty or len(mutable_features) < 2:
-        ax.axis("off")
-        return
-
-    X = df[mutable_features].values
-    if X.shape[0] < 3:
-        ax.axis("off")
-        return
-
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    try:
-        # Cluster to get group labels
-        k, labels, Z = optimal_hclust_k(X_scaled, max_k=max_k)
-
-        eta_dict = {}
-        n_samples = X.shape[0]
-
-        for feat in mutable_features:
-            x_feat = df[[feat]].values
-
-            # Skip constant feature (zero variance)
-            if np.var(x_feat) < 1e-8:
-                eta_dict[feat] = 0.0
-                continue
-
-            try:
-                F_val, _ = f_classif(x_feat, labels)
-                df_within = n_samples - 1 - 1
-                if df_within <= 0 or not np.isfinite(F_val[0]):
-                    eta = 0.0
-                else:
-                    eta = F_val[0] / (F_val[0] + df_within)
-                eta_dict[feat] = eta
-            except Exception:
-                eta_dict[feat] = 0.0
-
-        # Sort and plot top N
-        sorted_items = sorted(eta_dict.items(), key=lambda x: -x[1])
-        top_feats, top_eta = zip(*sorted_items[:top_n])
-
-        ax.barh(top_feats[::-1], top_eta[::-1])
-        ax.set_xlim(0, 1)
-
-    except Exception as e:
-        print(f"[ERROR] Cell {cell_key} → {e}")
-        ax.axis("off")
 
 
 
@@ -880,20 +1004,22 @@ def plot_cf_eta2_bar_constraints_cell(ax, df, cell_key, mutable_features, cluste
     X_scaled = scaler.fit_transform(X)
 
     try:
+        # For plotting into 2D
         if reducer == "PCA":
-            reducer = PCA(n_components=2)
+            reducer_model = PCA(n_components=2)
+            X_embedded = reducer_model.fit_transform(X)
         elif reducer == "UMAP":
-            reducer = UMAP(n_components=2, random_state=42, n_neighbors=5, min_dist=0.3)
+            reducer_model = UMAP(n_components=2, random_state=42, n_neighbors=5, min_dist=0.3)
+            X_embedded = reducer_model.fit_transform(X)
         else:
-            raise ValueError(f"Unknown dim_reduction method: {reducer}")
-        X_pca = reducer.fit_transform(X)
+            X_embedded = X  # No dimensionality reduction
 
-        # Cluster in the scaled space
-        if cluster_method=="hierarchal":
-            k, labels, Z = optimal_hclust_k(X_scaled, max_k=max_k)
-        elif cluster_method=="kmeans":
-            k, labels = optimal_clusters(X_pca, max_k=max_k)
-            labels = labels + 1  # Shift cluster labels to start from 1
+        # Clustering
+        if cluster_method == "hierarchal":
+            k, labels, Z = optimal_hclust_k(X, max_k=max_k)
+        else:  # e.g., kmeans
+            k, labels = optimal_clusters(X_embedded, max_k=max_k)
+            labels = labels + 1
 
 
         eta_dict = {}
@@ -915,82 +1041,26 @@ def plot_cf_eta2_bar_constraints_cell(ax, df, cell_key, mutable_features, cluste
                 eta = 0.0
 
             eta_dict[feat] = eta
+        
+        n_samples = X.shape[0]
+        n_clusters = len(np.unique(labels))
+        eta_thresh = eta2_threshold_from_alpha(0.05, n_samples, n_clusters)
+
+        # Draw the line
+        ax.axvline(eta_thresh, color='red', linestyle='--', linewidth=1.5)
 
         sorted_items = sorted(eta_dict.items(), key=lambda x: -x[1])
         top_feats, top_etas = zip(*sorted_items[:top_n]) if any(eta_dict.values()) else ([], [])
-
+        ax.tick_params(axis='x', labelsize=20)  # Increase x-axis tick label size
+        ax.tick_params(axis='y', labelsize=20)  # Increase y-axis tick label size
         if top_feats:
             ax.barh(top_feats[::-1], top_etas[::-1])
             ax.set_xlim(0, 1)
         else:
             ax.axis("off")
-        ax.set_xlabel('Effect size ($\eta^2$)', fontsize=10)
+        ax.set_xlabel('$\eta^2$', fontsize=20)
     except Exception as e:
         print(f"[ERROR] Cell {cell_key} → {e}")
-        ax.axis("off")
-
-def plot_cf_eta2_bar_constraints_cell_old(ax, df, cell_key, mutable_features, top_n=5, max_k=5, verbose=False):
-    if df.empty or len(mutable_features) < 2:
-        ax.axis("off")
-        return
-
-    # Constraints = non-mutable columns (not in mutable_features, not metadata columns)
-    constraint_features = [
-        col for col in df.columns 
-        if col not in mutable_features and col not in ['cell', 'individual_id', 'fitness']
-    ]
-    if len(constraint_features) < 2:
-        ax.axis("off")
-        return
-
-    X = df[mutable_features].values
-    if X.shape[0] < 3:
-        ax.axis("off")
-        return
-
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    try:
-        # Cluster individuals based on mutable features
-        k, labels, _ = optimal_hclust_k(X_scaled, max_k=max_k)
-
-        X_constraints_raw = df[constraint_features]
-        variances = X_constraints_raw.var(axis=0)
-        valid_mask = variances > 1e-8
-        X_constraints = X_constraints_raw.loc[:, valid_mask]
-
-        if X_constraints.shape[1] == 0:
-            ax.axis("off")
-            return
-
-        try:
-            F_vals, _ = f_classif(X_constraints.values, labels)
-            df_within = X_constraints.shape[0] - X_constraints.shape[1] - 1
-            eta_sq = np.divide(F_vals, F_vals + df_within, out=np.zeros_like(F_vals), where=(F_vals + df_within) != 0)
-            eta_sq = np.nan_to_num(eta_sq, nan=0.0)
-        except Exception as e:
-            if verbose:
-                print(f"[WARN] f_classif failed in cell {cell_key}: {e}")
-            ax.axis("off")
-            return
-
-        constraint_features_filtered = X_constraints.columns.tolist()
-        sorted_idx = np.argsort(-eta_sq)
-
-        if not np.any(eta_sq):
-            ax.axis("off")
-            return
-
-        top_features = np.array(constraint_features_filtered)[sorted_idx[:top_n]]
-        top_eta = eta_sq[sorted_idx[:top_n]]
-
-        ax.barh(top_features[::-1], top_eta[::-1])
-        ax.set_xlim(0, 1)
-
-    except Exception as e:
-        if verbose:
-            print(f"[ERROR] Cell {cell_key} → {e}")
         ax.axis("off")
 
 
@@ -1006,28 +1076,33 @@ def plot_cf_meanvalue_heatmap_cell(ax, df, cell_key, cluster_method, mutable_fea
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
+    # For plotting into 2D
     if reducer == "PCA":
-        reducer = PCA(n_components=2)
+        reducer_model = PCA(n_components=2)
+        X_embedded = reducer_model.fit_transform(X)
     elif reducer == "UMAP":
-        reducer = UMAP(n_components=2, random_state=42, n_neighbors=5, min_dist=0.3)
+        reducer_model = UMAP(n_components=2, random_state=42, n_neighbors=5, min_dist=0.3)
+        X_embedded = reducer_model.fit_transform(X)
     else:
-        raise ValueError(f"Unknown dim_reduction method: {reducer}")
-    X_pca = reducer.fit_transform(X)
+        X_embedded = X  # No dimensionality reduction
 
-    # Cluster in the scaled space
-    if cluster_method=="hierarchal":
-        k, labels, Z = optimal_hclust_k(X_scaled, max_k=max_k)
-    elif cluster_method=="kmeans":
-        k, labels = optimal_clusters(X_pca, max_k=max_k)
-        labels = labels + 1  # Shift cluster labels to start from 1
+    # Clustering
+    if cluster_method == "hierarchal":
+        k, labels, Z = optimal_hclust_k(X, max_k=max_k)
+    else:  # e.g., kmeans
+        k, labels = optimal_clusters(X_embedded, max_k=max_k)
+        labels = labels + 1
+
 
     df_tmp = df.copy()
     df_tmp['cluster'] = labels
     mean_by_cluster = df_tmp.groupby('cluster')[mutable_features].mean()
 
     sns.heatmap(mean_by_cluster, cmap='coolwarm', center=0, annot=True, fmt=".2f", ax=ax)
-    ax.set_xlabel("Mutable features", fontsize=10)
-    ax.set_ylabel("Cluster", fontsize=10)
+    ax.tick_params(axis='x', labelsize=18)  # Increase x-axis tick label size
+    ax.tick_params(axis='y', labelsize=18)  # Increase y-axis tick label size
+    #ax.set_xlabel("Mutable features", fontsize=16)
+    ax.set_ylabel("Cluster", fontsize=16)
 
     #ax.set_title(f"Mean Values per Cluster\nCell {cell_key}")
 
@@ -1050,20 +1125,22 @@ def plot_cf_meanvalue_heatmap_constraints_cell(ax, df, cell_key, cluster_method,
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
     try:
+        # For plotting into 2D
         if reducer == "PCA":
-            reducer = PCA(n_components=2)
+            reducer_model = PCA(n_components=2)
+            X_embedded = reducer_model.fit_transform(X)
         elif reducer == "UMAP":
-            reducer = UMAP(n_components=2, random_state=42, n_neighbors=5, min_dist=0.3)
+            reducer_model = UMAP(n_components=2, random_state=42, n_neighbors=5, min_dist=0.3)
+            X_embedded = reducer_model.fit_transform(X)
         else:
-            raise ValueError(f"Unknown dim_reduction method: {reducer}")
-        X_pca = reducer.fit_transform(X)
+            X_embedded = X  # No dimensionality reduction
 
-        # Cluster in the scaled space
-        if cluster_method=="hierarchal":
-            k, labels, Z = optimal_hclust_k(X_scaled, max_k=max_k)
-        elif cluster_method=="kmeans":
-            k, labels = optimal_clusters(X_pca, max_k=max_k)
-            labels = labels + 1  # Shift cluster labels to start from 1
+        # Clustering
+        if cluster_method == "hierarchal":
+            k, labels, Z = optimal_hclust_k(X, max_k=max_k)
+        else:  # e.g., kmeans
+            k, labels = optimal_clusters(X_embedded, max_k=max_k)
+            labels = labels + 1
 
         # Add cluster label to df and compute mean constraints per cluster
         df_tmp = df.copy()
@@ -1072,9 +1149,11 @@ def plot_cf_meanvalue_heatmap_constraints_cell(ax, df, cell_key, cluster_method,
 
         sns.heatmap(mean_by_cluster, cmap='coolwarm', center=0, annot=True, fmt=".2f", ax=ax)
         #ax.set_title(f"Constraint Means\nCell {cell_key}", fontsize=8)
-        ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right")
-        ax.set_xlabel("Constraint features", fontsize=10)
-        ax.set_ylabel("Cluster", fontsize=10)
+        #ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right")
+        ax.tick_params(axis='x', labelsize=20)  # Increase x-axis tick label size
+        ax.tick_params(axis='y', labelsize=20)  # Increase y-axis tick label size
+        #ax.set_xlabel("Constraint features", fontsize=16)
+        ax.set_ylabel("Cluster", fontsize=16)
 
     except Exception:
         ax.axis("off")
@@ -1094,7 +1173,7 @@ def plot_cf_kde_cell(ax, df, cell_key, mutable_features, feature, max_k=5, min_v
     X_scaled = scaler.fit_transform(X)
 
     try:
-        k, labels, Z = optimal_hclust_k(X_scaled, max_k=max_k)
+        k, labels, Z = optimal_clusters(X, max_k=max_k)
         df = df.copy()
         df['cluster'] = labels
 

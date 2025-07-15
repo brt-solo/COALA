@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=synthetic_cf
+#SBATCH --job-name=synthetic_cf_multicat
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=19bh19@queensu.ca
 #SBATCH --qos=privileged
@@ -8,8 +8,8 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16GB
 #SBATCH --time=0-24:00:00
-#SBATCH --output=synthetic_cf.out
-#SBATCH --error=synthetic_cf.err
+#SBATCH --output=synthetic_cf_multicat.out
+#SBATCH --error=synthetic_cf_multicat.err
 
 export PYTHONPATH=$PYTHONPATH:/global/home/hpc5434/MAP-CF
 
@@ -17,13 +17,13 @@ export PYTHONPATH=$PYTHONPATH:/global/home/hpc5434/MAP-CF
 cd /global/home/hpc5434/MAP-CF/synthetic
 #!/bin/bash
 
-FEATURE_CAT=~/MAP-CF/synthetic/synthetic_feature_categories_action.json
-METHODS=("uniform" "sbx")
+FEATURE_CAT=~/MAP-CF/synthetic/synthetic_feature_categories.json
+METHODS=("uniform")
 MUT_RATES=("None")
-INIT_POPS=(500 5000 10000)
-ITERS=(1000 10000 50000)
+INIT_POPS=(1000 5000 10000)
+ITERS=(10000 25000 50000)
 
-MODELS=("mlp_model")
+MODELS=("perfect_model" "mlp_model")
 
 for MODEL_NAME in "${MODELS[@]}"; do
 
@@ -42,7 +42,7 @@ for MODEL_NAME in "${MODELS[@]}"; do
       for INIT in "${INIT_POPS[@]}"; do
         for ITER in "${ITERS[@]}"; do
 
-          OUTPUT="${MODEL_NAME}_${METHOD}_init${INIT}_iter${ITER}"
+          OUTPUT="${MODEL_NAME}_${METHOD}_init${INIT}_iter${ITER}_multicat_setmaxmin"
           if [ "$RATE" != "None" ]; then
             OUTPUT="${OUTPUT}_mut${RATE}"
           fi
