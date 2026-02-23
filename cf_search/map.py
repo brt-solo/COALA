@@ -162,9 +162,11 @@ class mapcf_trend_intracell:
 
     def run(self):
         """Runs the MAP-Elites algorithm."""
+        print("initializing archive...")
         self.initialize_archive()
 
-        for _ in range(int(self.max_evals - self.params["random_init_batch"])):
+        for i in range(int(self.max_evals - self.params["random_init_batch"])):
+            print("Running generation", i)
             try:
                 parent_1 = self.select_parent1()
             except ValueError:
@@ -352,6 +354,521 @@ class mapcf_trend_intercell:
 
         return self.archive
 
+class mapcf_instance_interaction:
+    """MAP-Elites where crossover and mutation happen within the same cell."""
+
+    def __init__(self, dim_map, dim_x, max_evals, params, cell_feature_sets, X_train_df, feature_categories, X_reference, full_test, full_df, wrapper, method, mutation_rate=None, seed=6):
+        self.dim_map = dim_map
+        self.dim_x = dim_x
+        self.max_evals = max_evals
+        self.params = params
+        self.cell_feature_sets = cell_feature_sets
+        self.archive = {}
+        self.X_train_df = X_train_df
+        self.feature_categories = feature_categories
+        self.X_reference = X_reference
+        self.full_test = full_test
+        self.full_df = full_df
+        self.wrapper = wrapper
+        self.method = method
+        self.mutation_rate = mutation_rate
+
+        self.feature_mins = np.array(params["min"]).astype(float)
+        self.feature_maxs = np.array(params["max"]).astype(float)
+        self.X_reference = np.clip(self.X_reference, self.feature_mins, self.feature_maxs)
+
+        def is_binary_like(series, tol=1e-4):
+            unique_vals = np.unique(np.round(series.dropna(), decimals=4))
+            return len(unique_vals) == 2
+
+        self.binary_features = [
+            col for col in self.X_train_df.columns
+            if is_binary_like(self.X_train_df[col])
+        ]
+
+        self.feature_indices = {feature: list(self.X_train_df.columns).index(feature) for feature in self.X_train_df.columns}
+        self.full_feature_indices = {feature: list(self.full_df.columns).index(feature) for feature in self.full_df.columns}
+
+        self.is_sklearn_model = isinstance(wrapper, BaseEstimator)
+        self.is_torch_model = hasattr(wrapper, "eval") and callable(wrapper.eval)
+        self.seed = seed
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+        torch.manual_seed(self.seed)
+
+        ''''''
+        # --- Detect interaction features of the form "A_x_B" ---
+        self.interaction_defs = []      # list of (idx_base1, idx_base2, idx_interaction)
+        self.interaction_features = set()
+        self.int_feats = []
+        self.base_to_interactions = {}  # mapping from base feature to list of (base, interaction)
+
+        #print(cols)
+        for col in self.feature_indices.keys():
+            if "_x_" in col:
+                base1, base2 = col.split("_x_", 1)
+                #print(f"Found interaction feature: {col} (bases: {base1}, {base2})")
+                if base1 in self.feature_indices:
+                    i1 = self.feature_indices[base1]
+                    #print(f"  Interaction feature: {col} (bases idx: {i1},; interaction idx: {self.feature_indices[col]}) in test features")
+                else:
+                    i1 = self.full_feature_indices[base1]
+                    #print(f"  Interaction feature: {col} (bases idx: {i1},; interaction idx: {self.feature_indices[col]}) in full features")
+                if base2 in self.feature_indices:
+                    i2 = self.feature_indices[base2]
+                    #print(f"  Interaction feature: {col} (bases idx: {i2},; interaction idx: {self.feature_indices[col]}) in test features")
+                else:
+                    i2 = self.full_feature_indices[base2]
+                    #print(f"  Interaction feature: {col} (bases idx: {i2},; interaction idx: {self.feature_indices[col]}) in full features")
+                i_int = self.feature_indices[col]
+                if base1 not in self.int_feats:
+                    self.int_feats.append(base1)
+                if base2 not in self.int_feats:
+                    self.int_feats.append(base2)
+                self.interaction_defs.append((i1, i2, i_int))
+                self.interaction_features.add(col)
+
+                # --- fill base_to_interactions as dict of lists ---
+                if base1 not in self.base_to_interactions:
+                    self.base_to_interactions[base1] = []
+                self.base_to_interactions[base1].append((base2, col))
+
+                if base2 not in self.base_to_interactions:
+                    self.base_to_interactions[base2] = []
+                self.base_to_interactions[base2].append((base1, col))
+
+        # Immutable = all interaction features (and optionally PRS or others)
+        # e.g., if you still want PRS immutable:
+        # self.immutable_features.add("PRS_CSzscrShrineFEV1FVC")
+        '''
+        #print("Interaction features:", self.interaction_features)
+        print("Total interaction definitions:", len(self.interaction_defs))
+        print("Interaction definitions (base1_idx, base2_idx, interaction_idx):", self.interaction_defs)
+        print("Interaction features", self.int_feats)
+        '''
+        #print("Base to interaction mappings:", self.base_to_interactions)
+        
+    def initialize_archive(self):
+        batch_vectors = []
+        batch_cells = []
+        batch_size = int(self.params["random_init_batch"])
+
+        for _ in range(batch_size):
+            i, j = sorted(np.random.choice(range(len(self.feature_categories)), size=2, replace=True))
+            cell_index = (int(i), int(j))
+
+            if cell_index not in self.cell_feature_sets:
+                continue
+
+            mutable_features = self.cell_feature_sets[cell_index]
+            '''
+            raw_mutable = self.cell_feature_sets[cell_index]
+            mutable_features = [
+                f for f in raw_mutable if f not in self.immutable_features
+            ]
+            if not mutable_features:
+                continue
+            '''
+            feature_vector = self.X_reference.copy()
+            
+            for feature in mutable_features:
+                feature_index = self.feature_indices[feature]
+                if feature in self.binary_features:
+                    # Choose from actual binary-like values found in training data
+                    values = np.unique(np.round(self.X_train_df[feature].dropna(), decimals=4))
+                    feature_vector[feature_index] = np.random.choice(values)
+                else:
+                    # 20% chance of min, 20% chance of max, 60% uniform
+                    rand = np.random.rand()
+                    
+                    if rand < 0.05:
+                        feature_vector[feature_index] = self.feature_mins[feature_index]
+                    elif rand < 0.1:
+                        feature_vector[feature_index] = self.feature_maxs[feature_index]
+                    else:
+                        feature_vector[feature_index] = np.random.uniform(
+                            self.feature_mins[feature_index], self.feature_maxs[feature_index]
+                        )
+
+            # --- recompute any interaction features affected by these mutations ---
+                # Only care if this feature is a base in some interaction
+                if feature not in self.int_feats:
+                    continue
+
+                base_idx = self.feature_indices[feature]
+                base_val = feature_vector[base_idx]
+                #print("Recomputing interactions for mutated base feature:", feature, "with new value:", base_val)
+
+                # For each interaction that involves this base feature
+                for other_base, interaction_name in self.base_to_interactions.get(feature, []):
+                    #print("Recomputing interaction feature:", interaction_name, "involving base:", feature, "and other base:", other_base)
+                    # Get the other base's value:
+                    if other_base in self.feature_indices:
+                        # Other base is in X_train_df / current feature space -> use (possibly mutated) value
+                        other_idx = self.feature_indices[other_base]
+                        other_val = feature_vector[other_idx]
+                    else:
+                        # Other base is NOT in X_train_df -> fall back to full feature space
+                        other_idx_full = self.full_feature_indices[other_base]
+                        other_val = self.full_test[other_idx_full]  # <-- your full-reference vector here
+                        #print("Falling back to full feature space for base:", other_base)
+                        #print("  Full index:", other_idx_full  )
+                        #print("  Value:", other_val)
+
+                    # Now recompute the interaction term
+                    interaction_idx = self.feature_indices[interaction_name]
+                    #print("Old interaction value:", feature_vector[interaction_idx])
+                    #print("  Base value:", base_val, "Other base value:", other_val)
+                    feature_vector[interaction_idx] = base_val * other_val
+                    #print("New interaction value:", feature_vector[interaction_idx])
+            
+            batch_vectors.append(feature_vector)
+            batch_cells.append(cell_index)
+
+        batch_fitnesses = self.evaluate_batch(batch_vectors)
+
+        for vec, fit, cell_index in zip(batch_vectors, batch_fitnesses, batch_cells):
+            if cell_index not in self.archive:
+                self.archive[cell_index] = {"best": None, "population": []}
+            self.archive[cell_index]["population"].append((vec, fit))
+            if self.archive[cell_index]["best"] is None or fit > self.archive[cell_index]["best"][1]:
+                self.archive[cell_index]["best"] = (vec, fit)
+    
+    def evaluate_instance(self, feature_vector):
+        feature_vector = np.array(feature_vector, dtype=np.float32)
+        #feature_vector = self.recompute_interactions_vec(feature_vector)
+
+        if self.is_torch_model:
+            self.wrapper.eval()
+            feature_tensor = torch.tensor(feature_vector, dtype=torch.float32).unsqueeze(0).to(device)
+            with torch.no_grad():
+                predicted_value = self.wrapper(feature_tensor).cpu().numpy().flatten()[0]
+            return predicted_value
+        else:
+            feature_vector = np.array(feature_vector).reshape(1, -1)
+            return self.wrapper.predict(feature_vector)[0]
+
+    def evaluate_batch(self, feature_matrix):
+        feature_matrix = np.array(feature_matrix, dtype=np.float32)
+        #feature_matrix = self.recompute_interactions_batch(feature_matrix)
+
+        if self.is_torch_model:
+            self.wrapper.eval()
+            feature_tensor = torch.tensor(feature_matrix, dtype=torch.float32).to(device)
+            with torch.no_grad():
+                predictions = self.wrapper(feature_tensor).cpu().numpy().flatten()
+            return predictions
+        else:
+            return self.wrapper.predict(feature_matrix)
+
+
+
+    def ensure_binary_validity(self, child):
+        for feature in self.binary_features:
+            index = self.feature_indices[feature]
+            original_val = child[index]
+            # Find original two valid values
+            valid_values = np.unique(np.round(self.X_train_df[feature].dropna(), decimals=4))
+            if len(valid_values) == 2:
+                # Snap to closest of the two
+                child[index] = valid_values[np.argmin(np.abs(valid_values - original_val))]
+        return child
+
+
+    def single_point_crossover(self, p1, p2, mutable_features):
+        """
+        Single-point crossover applied only to mutable features.
+        Non-mutable features are taken from the reference vector.
+        """
+        child = np.array(self.X_reference).copy()
+        if len(mutable_features) < 2:
+            # fallback: copy one parent
+            selected = p1 if np.random.rand() < 0.5 else p2
+            for feature in mutable_features:
+                idx = self.feature_indices[feature]
+                child[idx] = selected[idx]
+            return child
+
+        point = np.random.randint(1, len(mutable_features))
+        for i, feature in enumerate(mutable_features):
+            idx = self.feature_indices[feature]
+            source = p1 if i < point else p2
+            child[idx] = source[idx]
+        return child
+
+
+    def uniform_crossover(self, p1, p2, mutable_features):
+        """
+        Uniform crossover applied only to mutable features.
+        Non-mutable features are taken from the reference vector.
+        """
+        child = np.array(self.X_reference).copy()
+        for feature in mutable_features:
+            idx = self.feature_indices[feature]
+            if np.random.rand() < 0.5:
+                child[idx] = p1[idx]
+            else:
+                child[idx] = p2[idx]
+
+       # --- recompute any interaction features affected by these mutations ---
+            # Only care if this feature is a base in some interaction
+            if feature not in self.int_feats:
+                continue
+
+            base_idx = self.feature_indices[feature]
+            base_val = child[base_idx]
+            #print("Recomputing interactions for mutated base feature:", feature, "with new value:", base_val)
+
+            # For each interaction that involves this base feature
+            for other_base, interaction_name in self.base_to_interactions.get(feature, []):
+                #print("Recomputing interaction feature:", interaction_name, "involving base:", feature, "and other base:", other_base)
+                # Get the other base's value:
+                if other_base in self.feature_indices:
+                    # Other base is in X_train_df / current feature space -> use (possibly mutated) value
+                    other_idx = self.feature_indices[other_base]
+                    other_val = child[other_idx]
+                else:
+                    # Other base is NOT in X_train_df -> fall back to full feature space
+                    other_idx_full = self.full_feature_indices[other_base]
+                    other_val = self.full_test[other_idx_full]  # <-- your full-reference vector here
+                    #print("Falling back to full feature space for base:", other_base)
+                    #print("  Full index:", other_idx_full  )
+                    #print("  Value:", other_val)
+
+                # Now recompute the interaction term
+                interaction_idx = self.feature_indices[interaction_name]
+                #print("Old interaction value:", feature_vector[interaction_idx])
+                #print("  Base value:", base_val, "Other base value:", other_val)
+                child[interaction_idx] = base_val * other_val
+                #print("crossover - New interaction value:", child[interaction_idx])
+
+        return child
+
+    def sbx_crossover(self, x, y, mutable_features):
+        """
+        Simulated Binary Crossover (SBX), applied only to mutable features.
+
+        - Uses `eta` parameter to control offspring distribution.
+        - Ensures crossover affects **only** mutable features.
+        - Keeps binary features (0 or 1) intact.
+        """
+        eta = 1.0  # Distribution parameter
+        xl = np.array(self.params['min']) 
+        xu = np.array(self.params['max'])
+        
+        # Ensure x and y are NumPy arrays
+        x = np.array(x, dtype=float)
+        y = np.array(y, dtype=float)
+        
+        r1 = np.random.random(size=len(mutable_features))
+        r2 = np.random.random(size=len(mutable_features))
+
+        child = np.array(self.X_reference).copy()  # Start from reference, then mutate only mutable features
+
+        for idx, feature in enumerate(mutable_features):
+            feature_index = self.feature_indices[feature]
+
+            # If binary, skip SBX (you might handle binary features separately)
+            if feature in self.binary_features:
+                continue
+
+            # Extract bounds
+            x1 = min(x[feature_index], y[feature_index])
+            x2 = max(x[feature_index], y[feature_index])
+            if abs(x2 - x1) < 1e-15:
+                continue  # Parents are too similar
+
+            xl_i = xl[feature_index]
+            xu_i = xu[feature_index]
+
+            # SBX calculations
+            beta = 1.0 + (2.0 * (x1 - xl_i)) / (x2 - x1)
+            alpha = 2.0 - beta ** -(eta + 1)
+            rand = r1[idx]
+            if rand <= 1.0 / alpha:
+                beta_q = (rand * alpha / 2.0) ** (1.0 / (eta + 1))
+            else:
+                beta_q = (1.0 / (2.0 - rand * alpha)) ** (1.0 / (eta + 1))
+
+                # Generate child candidates
+                c1 = 0.5 * ((x1 + x2) - beta_q * (x2 - x1))
+                c2 = 0.5 * ((x1 + x2) + beta_q * (x2 - x1))
+
+                # Clip to bounds
+                c1 = np.clip(c1, xl_i, xu_i)
+                c2 = np.clip(c2, xl_i, xu_i)
+
+                # Randomly choose one child
+                child[feature_index] = c2 if r2[idx] <= 0.5 else c1
+
+        # --- recompute any interaction features affected by these mutations ---
+            # Only care if this feature is a base in some interaction
+            if feature not in self.int_feats:
+                continue
+
+            base_idx = self.feature_indices[feature]
+            base_val = child[base_idx]
+            #print("Recomputing interactions for mutated base feature:", feature, "with new value:", base_val)
+
+            # For each interaction that involves this base feature
+            for other_base, interaction_name in self.base_to_interactions.get(feature, []):
+                #print("Recomputing interaction feature:", interaction_name, "involving base:", feature, "and other base:", other_base)
+                # Get the other base's value:
+                if other_base in self.feature_indices:
+                    # Other base is in X_train_df / current feature space -> use (possibly mutated) value
+                    other_idx = self.feature_indices[other_base]
+                    other_val = child[other_idx]
+                else:
+                    # Other base is NOT in X_train_df -> fall back to full feature space
+                    other_idx_full = self.full_feature_indices[other_base]
+                    other_val = self.full_test[other_idx_full]  # <-- your full-reference vector here
+                    #print("Falling back to full feature space for base:", other_base)
+                    #print("  Full index:", other_idx_full  )
+                    #print("  Value:", other_val)
+
+                # Now recompute the interaction term
+                interaction_idx = self.feature_indices[interaction_name]
+                #print("Old interaction value:", feature_vector[interaction_idx])
+                #print("  Base value:", base_val, "Other base value:", other_val)
+                child[interaction_idx] = base_val * other_val
+                print("crossover - New interaction value:", child[interaction_idx])
+
+        # Done — `child` has mutable features modified, non-mutable ones set to reference
+        return child
+
+                
+    def mutate(self, parent, mutable_features):
+        mutation_rate=self.mutation_rate
+        child = parent.copy()
+        for feature in mutable_features:
+            if np.random.rand() < mutation_rate:
+                index = self.feature_indices[feature]
+                if feature in self.binary_features:
+                    child[index] = 1 - int(round(child[index]))
+                else:
+                    child[index] = np.random.uniform(self.feature_mins[index], self.feature_maxs[index])
+
+        # --- recompute any interaction features affected by these mutations ---
+            # Only care if this feature is a base in some interaction
+            if feature not in self.int_feats:
+                continue
+
+            base_idx = self.feature_indices[feature]
+            base_val = child[base_idx]
+            #print("Recomputing interactions for mutated base feature:", feature, "with new value:", base_val)
+
+            # For each interaction that involves this base feature
+            for other_base, interaction_name in self.base_to_interactions.get(feature, []):
+                #print("Recomputing interaction feature:", interaction_name, "involving base:", feature, "and other base:", other_base)
+                # Get the other base's value:
+                if other_base in self.feature_indices:
+                    # Other base is in X_train_df / current feature space -> use (possibly mutated) value
+                    other_idx = self.feature_indices[other_base]
+                    other_val = child[other_idx]
+                else:
+                    # Other base is NOT in X_train_df -> fall back to full feature space
+                    other_idx_full = self.full_feature_indices[other_base]
+                    other_val = self.full_test[other_idx_full]  # <-- your full-reference vector here
+                    #print("Falling back to full feature space for base:", other_base)
+                    #print("  Full index:", other_idx_full  )
+                    #print("  Value:", other_val)
+
+                # Now recompute the interaction term
+                interaction_idx = self.feature_indices[interaction_name]
+                #print("Old interaction value:", feature_vector[interaction_idx])
+                #print("  Base value:", base_val, "Other base value:", other_val)
+                child[interaction_idx] = base_val * other_val
+                print("mutation - New interaction value:", child[interaction_idx])
+
+        return child
+    
+
+
+    def select_parents(self, cell_index):
+        population = self.archive[cell_index]["population"]
+        parent_1 = max(population, key=lambda vec_fitness: vec_fitness[1])[0]
+        parent_2 = random.choice(population)[0]
+        return parent_1.copy(), parent_2.copy()
+
+    def evaluate_and_store(self, child, cell_index):
+        fitness = self.evaluate_instance(child)
+        if cell_index not in self.archive:
+            self.archive[cell_index] = {"best": (child, fitness), "population": [(child, fitness)]}
+        else:
+            self.archive[cell_index]["population"].append((child, fitness))
+            if fitness > self.archive[cell_index]["best"][1]:
+                self.archive[cell_index]["best"] = (child, fitness)
+                []
+
+
+    def run(self):
+        self.initialize_archive()
+        batch_size = 1024
+        child_batch = []
+        cell_batch = []
+
+        total_steps = int(self.max_evals - self.params["random_init_batch"])
+
+        for a in range(total_steps):
+            i, j = sorted(np.random.choice(range(len(self.feature_categories)), size=2, replace=True))
+            cell_index = (i, j)
+
+            if cell_index not in self.archive:
+                continue
+
+            mutable_features = self.cell_feature_sets[cell_index]
+            '''
+            raw_mutable = self.cell_feature_sets[cell_index]
+            mutable_features = [
+                f for f in raw_mutable if f not in self.immutable_features
+            ]
+            if not mutable_features:
+                continue
+            '''
+            parent_1, parent_2 = self.select_parents(cell_index)
+
+            # --- crossover method ---
+            if self.method == "sbx":
+                child = self.sbx_crossover(parent_1, parent_2, mutable_features)
+            elif self.method == "uniform":
+                child = self.uniform_crossover(parent_1, parent_2, mutable_features)
+            elif self.method == "single_point":
+                child = self.single_point_crossover(parent_1, parent_2, mutable_features)
+            else:
+                raise ValueError(f"Unknown crossover method: {self.method}")
+
+
+            # --- Apply mutation ---
+            if self.mutation_rate is not None and self.mutation_rate > 0:
+                child = self.mutate(child, mutable_features)
+
+
+            # --- Enforce binary validity ---
+            child = self.ensure_binary_validity(child)
+
+            # --- Store in batch ---
+            child_batch.append(child)
+            cell_batch.append(cell_index)
+
+
+            # When batch is full or last step
+            if len(child_batch) == batch_size or a == total_steps - 1:
+                fitness_batch = self.evaluate_batch(child_batch)
+
+                for child_vec, fitness, cell in zip(child_batch, fitness_batch, cell_batch):
+                    if cell not in self.archive:
+                        self.archive[cell] = {"best": (child_vec, fitness), "population": [(child_vec, fitness)]}
+                    else:
+                        self.archive[cell]["population"].append((child_vec, fitness))
+                        if fitness > self.archive[cell]["best"][1]:
+                            self.archive[cell]["best"] = (child_vec, fitness)
+
+                # Clear batches
+                child_batch = []
+                cell_batch = []
+
+        return self.archive
+    
 
 class mapcf_instance:
     """MAP-Elites where crossover and mutation happen within the same cell."""
@@ -387,10 +904,11 @@ class mapcf_instance:
 
         self.is_sklearn_model = isinstance(wrapper, BaseEstimator)
         self.is_torch_model = hasattr(wrapper, "eval") and callable(wrapper.eval)
-        self.seed = seed
+        self.seed = seed #random.randint(1, 20)
         np.random.seed(self.seed)
         random.seed(self.seed)
         torch.manual_seed(self.seed)
+
     def initialize_archive(self):
         batch_vectors = []
         batch_cells = []
@@ -398,7 +916,7 @@ class mapcf_instance:
 
         for _ in range(batch_size):
             i, j = sorted(np.random.choice(range(len(self.feature_categories)), size=2, replace=True))
-            cell_index = (i, j)
+            cell_index = (int(i), int(j)) 
 
             if cell_index not in self.cell_feature_sets:
                 continue
@@ -595,25 +1113,17 @@ class mapcf_instance:
         parent_2 = random.choice(population)[0]
         return parent_1.copy(), parent_2.copy()
 
-    def evaluate_and_store(self, child, cell_index):
-        fitness = self.evaluate_instance(child)
-        if cell_index not in self.archive:
-            self.archive[cell_index] = {"best": (child, fitness), "population": [(child, fitness)]}
-        else:
-            self.archive[cell_index]["population"].append((child, fitness))
-            if fitness > self.archive[cell_index]["best"][1]:
-                self.archive[cell_index]["best"] = (child, fitness)
-
 
     def run(self):
+        
         self.initialize_archive()
-        batch_size = 1024
+        batch_size = 1
         child_batch = []
         cell_batch = []
-
         total_steps = int(self.max_evals - self.params["random_init_batch"])
-
+        print(f"Total steps: {total_steps}")
         for a in range(total_steps):
+            print(f"Step {a+1}/{total_steps}")
             i, j = sorted(np.random.choice(range(len(self.feature_categories)), size=2, replace=True))
             cell_index = (i, j)
 
@@ -645,26 +1155,331 @@ class mapcf_instance:
             # --- Store in batch ---
             child_batch.append(child)
             cell_batch.append(cell_index)
+            mutable_indices = [self.feature_indices[f] for f in mutable_features]
+            #print(child[mutable_indices])
+
 
 
             # When batch is full or last step
             if len(child_batch) == batch_size or a == total_steps - 1:
                 fitness_batch = self.evaluate_batch(child_batch)
-
+                
                 for child_vec, fitness, cell in zip(child_batch, fitness_batch, cell_batch):
+                    
                     if cell not in self.archive:
                         self.archive[cell] = {"best": (child_vec, fitness), "population": [(child_vec, fitness)]}
                     else:
                         self.archive[cell]["population"].append((child_vec, fitness))
                         if fitness > self.archive[cell]["best"][1]:
+                            print("fitness", fitness)
                             self.archive[cell]["best"] = (child_vec, fitness)
 
                 # Clear batches
                 child_batch = []
                 cell_batch = []
-
+                
         return self.archive
 
+class mapcf_instance_classification:
+    """MAP-Elites where crossover and mutation happen within the same cell."""
+
+    def __init__(self, dim_map, dim_x, max_evals, params, cell_feature_sets, X_train_df, feature_categories, X_reference, wrapper, method, mutation_rate=None, seed=6):
+        self.dim_map = dim_map
+        self.dim_x = dim_x
+        self.max_evals = max_evals
+        self.params = params
+        self.cell_feature_sets = cell_feature_sets
+        self.archive = {}
+        self.X_train_df = X_train_df
+        self.feature_categories = feature_categories
+        self.X_reference = X_reference
+        self.wrapper = wrapper
+        self.method = method
+        self.mutation_rate = mutation_rate
+        
+        #self.X_reference = np.clip(self.X_reference, self.feature_mins, self.feature_maxs)
+
+        def is_binary_like(series, tol=1e-4):
+            unique_vals = np.unique(np.round(series.dropna(), decimals=4))
+            return len(unique_vals) == 2
+
+        self.binary_features = [
+            col for col in self.X_train_df.columns
+            if is_binary_like(self.X_train_df[col])
+        ]
+
+        self.feature_indices = {feature: list(self.X_train_df.columns).index(feature) for feature in self.X_train_df.columns}
+        self.feature_value_pool = {
+            col: np.unique(self.X_train_df[col].dropna().to_numpy())
+            for col in self.X_train_df.columns
+        }
+        print("Feature value pools prepared.", self.feature_value_pool)
+        self.is_sklearn_model = isinstance(wrapper, BaseEstimator)
+        self.is_torch_model = hasattr(wrapper, "eval") and callable(wrapper.eval)
+        self.seed = seed #random.randint(1, 20)
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+        torch.manual_seed(self.seed)
+
+    def initialize_archive(self):
+        batch_vectors = []
+        batch_cells = []
+        batch_size = int(self.params["random_init_batch"])
+
+        for _ in range(batch_size):
+            i, j = sorted(np.random.choice(range(len(self.feature_categories)), size=2, replace=True))
+            cell_index = (int(i), int(j)) 
+
+            if cell_index not in self.cell_feature_sets:
+                continue
+
+            mutable_features = self.cell_feature_sets[cell_index]
+            feature_vector = self.X_reference.copy()
+            
+            for feature in mutable_features:
+                feature_index = self.feature_indices[feature]
+                pool = self.feature_value_pool[feature]
+                if pool.size == 0:
+                    continue  # all missing in train; skip
+                feature_vector[feature_index] = np.random.choice(pool)
+
+            '''
+            for feature in mutable_features:
+                feature_index = self.feature_indices[feature]
+                values = self.X_train_df[feature].dropna().to_numpy()
+                feature_vector[feature_index] = np.random.choice(values)
+            '''
+            batch_vectors.append(feature_vector)
+            batch_cells.append(cell_index)
+
+        batch_fitnesses = self.evaluate_batch(batch_vectors)
+
+        for vec, fit, cell_index in zip(batch_vectors, batch_fitnesses, batch_cells):
+            if cell_index not in self.archive:
+                self.archive[cell_index] = {"best": None, "population": []}
+            self.archive[cell_index]["population"].append((vec, fit))
+            if self.archive[cell_index]["best"] is None or fit > self.archive[cell_index]["best"][1]:
+                print("fit", fit)
+                self.archive[cell_index]["best"] = (vec, fit)
+    
+    def evaluate_instance(self, feature_vector):
+        if self.is_torch_model:
+            self.wrapper.eval()
+            feature_tensor = torch.tensor(feature_vector, dtype=torch.float32).unsqueeze(0).to(device)
+            with torch.no_grad():
+                predicted_value = self.wrapper(feature_tensor).cpu().numpy().flatten()[0]
+            return predicted_value
+        else:
+            feature_vector = np.array(feature_vector).reshape(1, -1)
+            print(f"evaluated: {self.wrapper.predict_proba(feature_vector)[0]}")
+            return self.wrapper.predict_proba(feature_vector)[0]
+
+    def evaluate_batch(self, feature_matrix):
+        feature_matrix = np.array(feature_matrix, dtype=np.float32)
+
+        if self.is_torch_model:
+            self.wrapper.eval()
+            feature_tensor = torch.tensor(feature_matrix, dtype=torch.float32).to(device)
+            with torch.no_grad():
+                predictions = self.wrapper(feature_tensor).cpu().numpy().flatten()
+            return predictions
+        else:
+            #print(self.wrapper.predict_proba(feature_matrix)[:, 0])
+            return self.wrapper.predict_proba(feature_matrix)[:, 0]
+
+    def ensure_binary_validity(self, child):
+        for feature in self.binary_features:
+            index = self.feature_indices[feature]
+            original_val = child[index]
+            # Find original two valid values
+            valid_values = np.unique(np.round(self.X_train_df[feature].dropna(), decimals=4))
+            if len(valid_values) == 2:
+                # Snap to closest of the two
+                child[index] = valid_values[np.argmin(np.abs(valid_values - original_val))]
+        return child
+
+
+    def single_point_crossover(self, p1, p2, mutable_features):
+        """
+        Single-point crossover applied only to mutable features.
+        Non-mutable features are taken from the reference vector.
+        """
+        child = np.array(self.X_reference).copy()
+        if len(mutable_features) < 2:
+            # fallback: copy one parent
+            selected = p1 if np.random.rand() < 0.5 else p2
+            for feature in mutable_features:
+                idx = self.feature_indices[feature]
+                child[idx] = selected[idx]
+            return child
+
+        point = np.random.randint(1, len(mutable_features))
+        for i, feature in enumerate(mutable_features):
+            idx = self.feature_indices[feature]
+            source = p1 if i < point else p2
+            child[idx] = source[idx]
+        return child
+
+
+    def uniform_crossover(self, p1, p2, mutable_features):
+        """
+        Uniform crossover applied only to mutable features.
+        Non-mutable features are taken from the reference vector.
+        """
+        child = np.array(self.X_reference).copy()
+        for feature in mutable_features:
+            idx = self.feature_indices[feature]
+            if np.random.rand() < 0.5:
+                child[idx] = p1[idx]
+            else:
+                child[idx] = p2[idx]
+        return child
+
+    def sbx_crossover(self, x, y, mutable_features):
+        """
+        Simulated Binary Crossover (SBX), applied only to mutable features.
+
+        - Uses `eta` parameter to control offspring distribution.
+        - Ensures crossover affects **only** mutable features.
+        - Keeps binary features (0 or 1) intact.
+        """
+        eta = 1.0  # Distribution parameter
+        xl = np.array(self.params['min']) 
+        xu = np.array(self.params['max'])
+        
+        # Ensure x and y are NumPy arrays
+        x = np.array(x, dtype=float)
+        y = np.array(y, dtype=float)
+        
+        r1 = np.random.random(size=len(mutable_features))
+        r2 = np.random.random(size=len(mutable_features))
+
+        child = np.array(self.X_reference).copy()  # Start from reference, then mutate only mutable features
+
+        for idx, feature in enumerate(mutable_features):
+            feature_index = self.feature_indices[feature]
+
+            # If binary, skip SBX (you might handle binary features separately)
+            if feature in self.binary_features:
+                continue
+
+            # Extract bounds
+            x1 = min(x[feature_index], y[feature_index])
+            x2 = max(x[feature_index], y[feature_index])
+            if abs(x2 - x1) < 1e-15:
+                continue  # Parents are too similar
+
+            xl_i = xl[feature_index]
+            xu_i = xu[feature_index]
+
+            # SBX calculations
+            beta = 1.0 + (2.0 * (x1 - xl_i)) / (x2 - x1)
+            alpha = 2.0 - beta ** -(eta + 1)
+            rand = r1[idx]
+            if rand <= 1.0 / alpha:
+                beta_q = (rand * alpha / 2.0) ** (1.0 / (eta + 1))
+            else:
+                beta_q = (1.0 / (2.0 - rand * alpha)) ** (1.0 / (eta + 1))
+
+            c1 = 0.5 * ((x1 + x2) - beta_q * (x2 - x1))
+            c2 = 0.5 * ((x1 + x2) + beta_q * (x2 - x1))
+            c1 = np.clip(c1, xl_i, xu_i)
+            c2 = np.clip(c2, xl_i, xu_i)
+            child[feature_index] = c2 if r2[idx] <= 0.5 else c1
+
+
+        # Done — `child` has mutable features modified, non-mutable ones set to reference
+        return child
+
+                
+    def mutate(self, parent, mutable_features):
+        mutation_rate=self.mutation_rate
+        child = parent.copy()
+        for feature in mutable_features:
+            if np.random.rand() < mutation_rate:
+                index = self.feature_indices[feature]
+                pool = self.feature_value_pool[feature]
+                if pool.size == 0:
+                    continue  # all missing in train; skip
+                child[index] = np.random.choice(pool)
+
+        return child
+    
+
+
+    def select_parents(self, cell_index):
+        population = self.archive[cell_index]["population"]
+        parent_1 = max(population, key=lambda vec_fitness: vec_fitness[1])[0]
+        parent_2 = random.choice(population)[0]
+        return parent_1.copy(), parent_2.copy()
+
+
+    def run(self):
+        
+        self.initialize_archive()
+        batch_size = 256
+        child_batch = []
+        cell_batch = []
+        total_steps = int(self.max_evals - self.params["random_init_batch"])
+        print(f"Total steps: {total_steps}")
+        for a in range(total_steps):
+            #print(f"Step {a+1}/{total_steps}")
+            i, j = sorted(np.random.choice(range(len(self.feature_categories)), size=2, replace=True))
+            cell_index = (i, j)
+
+            if cell_index not in self.archive:
+                continue
+
+            mutable_features = self.cell_feature_sets[cell_index]
+            parent_1, parent_2 = self.select_parents(cell_index)
+
+            # --- crossover method ---
+            if self.method == "sbx":
+                child = self.sbx_crossover(parent_1, parent_2, mutable_features)
+            elif self.method == "uniform":
+                child = self.uniform_crossover(parent_1, parent_2, mutable_features)
+            elif self.method == "single_point":
+                child = self.single_point_crossover(parent_1, parent_2, mutable_features)
+            else:
+                raise ValueError(f"Unknown crossover method: {self.method}")
+
+
+            # --- Apply mutation ---
+            if self.mutation_rate is not None and self.mutation_rate > 0:
+                child = self.mutate(child, mutable_features)
+
+
+            # --- Enforce binary validity ---
+            child = self.ensure_binary_validity(child)
+
+            # --- Store in batch ---
+            child_batch.append(child)
+            cell_batch.append(cell_index)
+            mutable_indices = [self.feature_indices[f] for f in mutable_features]
+            #print(child[mutable_indices])
+
+
+
+            # When batch is full or last step
+            if len(child_batch) == batch_size or a == total_steps - 1:
+                fitness_batch = self.evaluate_batch(child_batch)
+                
+                for child_vec, fitness, cell in zip(child_batch, fitness_batch, cell_batch):
+                    #print("fitness", fitness)
+                    
+                    if cell not in self.archive:
+                        self.archive[cell] = {"best": (child_vec, fitness), "population": [(child_vec, fitness)]}
+                    else:
+                        self.archive[cell]["population"].append((child_vec, fitness))
+                        if fitness > self.archive[cell]["best"][1]:
+                            print("fitness", fitness)
+                            self.archive[cell]["best"] = (child_vec, fitness)
+
+                # Clear batches
+                child_batch = []
+                cell_batch = []
+                
+        return self.archive
 
 
 from joblib import Parallel, delayed
@@ -707,6 +1522,8 @@ class mapcf_instance_parallelized:
         np.random.seed(self.seed)
         random.seed(self.seed)
         torch.manual_seed(self.seed)
+
+
 
     def initialize_archive(self):
         batch_vectors = []
@@ -1184,6 +2001,7 @@ if __name__ == "__main__":
 
         data_records = []
         for cell_index, data in archive.items():
+            
             if data["best"]:
                 best_vector, best_fitness = data["best"]
                 record = dict(zip(X_train_df.columns, best_vector))

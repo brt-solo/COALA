@@ -29,71 +29,215 @@ try:
 except ImportError:
     use_wes_palette = False
 
-def fused_similarity_network(
-    archive_dict,
-    cell_feature_sets,
-    feature_categories,
-    test_data,
-    color_feature
-):
+
+def get_similarity(archive_dict, cell_feature_sets, feature_categories,
+                   test_data, color_feature,
+                   K=10, mu=0.5):
     data_views = []
     categories = list(feature_categories.keys())
-    n = len(categories)
-    #go through each cell and make a distance matrix
-    for i in range(n):
-        for j in range(n):
-            cell_key = (i, j)
+    ncat = len(categories)
 
+    for i in range(ncat):
+        for j in range(ncat):
+            cell_key = (i, j)
             df = extract_cell_data(archive_dict, cell_key)
+            if df.empty:
+                continue
 
             mutable_features = cell_feature_sets[cell_key]
-            #print(f"{cell_key} columns: {df.columns.tolist()}")
-            #print(f"{cell_key}: {mutable_features}")
             missing = [f for f in mutable_features if f not in df.columns]
             if missing:
-                print(f"[{cell_key}] Missing features: {missing}")
-                print(f"Available in df: {df.columns.tolist()}")
-                continue  # skip this cell
+                continue
+
+            X = df[mutable_features].to_numpy()
+            data_views.append(X)
+
+    # --- scale each view ---
+    scaler = StandardScaler()
+    X = scaler.fit_transform(X)
+    if not data_views:
+        raise ValueError("No valid data views found in archive_dict.")
+
+    # --- similarity fusion ---
+    if len(data_views) == 1:
+        fused_affinity = snf.make_affinity(data_views[0], metric='euclidean', K=K, mu=mu)
+    else:
+        affinities = [snf.make_affinity(X, metric='euclidean', K=K, mu=mu) for X in data_views]
+        fused_affinity = snf.snf(affinities)
+
+    n = fused_affinity.shape[0]
+
+    # --- symmetric kNN mask ---
+    K_eff = max(1, min(K, n - 1))
+    top_idx = np.argsort(fused_affinity, axis=1)[:, ::-1]
+    mask = np.zeros_like(fused_affinity, dtype=bool)
+    for i in range(n):
+        row = top_idx[i]
+        row = row[row != i][:K_eff]
+        mask[i, row] = True
+    mask = np.logical_or(mask, mask.T)
+
+    # --- build graph ---
+    G = nx.Graph()
+    vals = test_data[color_feature].to_numpy()
+    for i in range(n):
+        G.add_node(i, value=vals[i])
+
+    ii, jj = np.where(mask)
+    for i, j in zip(ii, jj):
+        if i < j:
+            w = fused_affinity[i, j]
+            if w > 0:
+                G.add_edge(i, j, weight=w)
+
+    if G.number_of_edges() == 0:
+        raise ValueError("Fused similarity graph has no edges. Try larger K or mu.")
+
+    # --- PyTorch Geometric exports ---
+    edges = list(G.edges())
+    edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
+    edge_weights = np.array([G[u][v]['weight'] for u, v in edges])
+    edge_attr = torch.tensor(edge_weights, dtype=torch.float32).view(-1, 1)
+
+    return G, edge_index, edge_weights, edge_attr, fused_affinity
+
+
+def plot_fused_similarity(archive_dict, cell_feature_sets, feature_categories,
+                          test_data, color_feature,
+                          K=10, mu=0.5, global_vmin=-3, global_vmax=3,
+                          figsize=(6, 6), seed=42, iterations=300):
+    """
+    Build and plot a fused similarity network across all cells using SNF.
+
+    Parameters
+    ----------
+    archive_dict : dict
+        Archive dictionary (same as used in plot_cellwise_grid).
+    cell_feature_sets : dict
+        Mapping from cell_key -> list of mutable features.
+    feature_categories : dict
+        Mapping of category labels (only used to iterate cells).
+    test_data : pd.DataFrame
+        Global dataframe with metadata (e.g. color_feature column).
+    color_feature : str
+        Column in test_data used for node coloring.
+    K : int
+        Number of neighbors for kNN graph.
+    mu : float
+        SNF parameter controlling edge weighting.
+    global_vmin, global_vmax : float
+        Color scale range.
+    figsize : tuple
+        Figure size.
+    seed, iterations : int
+        Parameters for networkx spring layout.
+
+    Returns
+    -------
+    fig : matplotlib Figure
+    G : networkx.Graph
+    edge_index : torch.LongTensor (2, E)
+    edge_weights : np.ndarray (E,)
+    edge_attr : torch.FloatTensor (E, 1)
+    fused_affinity : np.ndarray (n, n)
+        The fused similarity matrix.
+    """
+
+    # --- collect per-cell views ---
+    data_views = []
+    categories = list(feature_categories.keys())
+    ncat = len(categories)
+
+    for i in range(ncat):
+        for j in range(ncat):
+            cell_key = (i, j)
+            df = extract_cell_data(archive_dict, cell_key)
+            if df.empty:
+                continue
+
+            mutable_features = cell_feature_sets[cell_key]
+            missing = [f for f in mutable_features if f not in df.columns]
+            if missing:
+                continue
+
             X = df[mutable_features].values
             data_views.append(X)
 
-    # Now fuse the similarity networks
-    affinities = snf.make_affinity(data_views, metric='euclidean', K=5, mu=0.5)
+    if not data_views:
+        raise ValueError("No valid data views found in archive_dict.")
+
+    # --- build affinity matrices and fuse ---
+    affinities = [snf.make_affinity(X, metric='euclidean', K=K, mu=mu) for X in data_views]
     fused_affinity = snf.snf(affinities)
 
-    G = nx.Graph()
     n = fused_affinity.shape[0]
 
+    # --- symmetric kNN (union) ---
+    K_eff = max(1, min(K, n - 1))
+    top_idx = np.argsort(fused_affinity, axis=1)[:, ::-1]
+    mask = np.zeros_like(fused_affinity, dtype=bool)
     for i in range(n):
-        G.add_node(i, color=test_data[color_feature].iloc[i])
+        row = top_idx[i]
+        row = row[row != i][:K_eff]
+        mask[i, row] = True
+    mask = np.logical_or(mask, mask.T)
 
-    K = 5  # number of neighbors
-    for i in range(n):
-        # Get indices of top K neighbors (excluding self)
-        top_k = np.argsort(fused_affinity[i])[::-1][1:K+1]
-        for j in top_k:
-            weight = fused_affinity[i, j]
-            if weight > 0:
-                G.add_edge(i, j, weight=weight)
+    # --- build graph ---
+    G = nx.Graph()
+    G.add_nodes_from(range(n))
+    ii, jj = np.where(mask)
+    for i, j in zip(ii, jj):
+        if i < j:
+            w = fused_affinity[i, j]
+            if w > 0:
+                G.add_edge(i, j, weight=w)
 
-    fig, ax = plt.subplots(figsize=(8, 6), dpi=500)
-    pos = nx.spring_layout(G, seed=42)
-    edge_weights = np.array([G[u][v]['weight'] for u, v in G.edges])
+    if G.number_of_edges() == 0:
+        raise ValueError("Fused network has no edges. Try larger K or mu.")
 
-    norm = plt.Normalize(vmin=-1, vmax=1)
-    node_colors = [plt.cm.viridis(norm(G.nodes[i]['color'])) for i in G.nodes]
+    # --- node colors ---
+    vals = test_data[color_feature].to_numpy()
+    if np.all(np.isnan(vals)):
+        vals = np.zeros_like(vals)
+        vmin, vmax = 0.0, 1.0
+    else:
+        fill_val = np.nanmedian(vals)
+        vals = np.where(np.isnan(vals), fill_val, vals)
+        vmin = global_vmin if global_vmin is not None else np.nanmin(vals)
+        vmax = global_vmax if global_vmax is not None else np.nanmax(vals)
 
-    # Normalize edge weights
-    edge_norm = plt.Normalize(vmin=edge_weights.min(), vmax=edge_weights.max())
-    edge_colors = [plt.cm.Blues(edge_norm(w)) for w in edge_weights]
+    # --- layout + edge styling ---
+    pos = nx.spring_layout(G, seed=seed, weight='weight', iterations=iterations)
+    edge_w = np.array([d['weight'] for *_ , d in G.edges(data=True)])
+    ew_norm = (edge_w - edge_w.min()) / (edge_w.ptp() + 1e-12)
+    edge_colors = [plt.cm.inferno(x) for x in ew_norm]
+    edge_widths = 0.5 + 1.5 * ew_norm
 
+    # --- plot ---
+    fig, ax = plt.subplots(figsize=figsize, dpi=300)
+    ax.set_axis_off()
     nx.draw(
         G, pos, ax=ax, with_labels=False,
-        node_color=node_colors, node_size=50,
-        edge_color=edge_colors, edge_cmap=plt.cm.Blues,
-        width=0.5  # Use manually normalized colors
+        node_color=vals, cmap='viridis', vmin=vmin, vmax=vmax,
+        node_size=50,
+        edge_color=edge_colors,
+        width=edge_widths
     )
-    return fig
+
+    # --- colorbar ---
+    sm = plt.cm.ScalarMappable(cmap='viridis', norm=plt.Normalize(vmin=vmin, vmax=vmax))
+    sm.set_array(vals)
+    cbar = plt.colorbar(sm, ax=ax, fraction=0.04, pad=0.01)
+    cbar.set_label(color_feature, fontsize=10)
+    cbar.ax.tick_params(labelsize=9)
+
+    # --- PyTorch Geometric friendly outputs ---
+    edges = list(G.edges())
+    edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
+    edge_weights = np.array([G[u][v]['weight'] for u, v in edges])
+    edge_attr = torch.tensor(edge_weights, dtype=torch.float32).view(-1, 1)
+
+    return fig, G, edge_index, edge_weights, edge_attr, fused_affinity
 
 
 def plot_cellwise_grid(
@@ -147,12 +291,12 @@ def plot_cellwise_grid(
                 if legend and hasattr(mappable, 'legend_elements'):
                     handles, labels = mappable.legend_elements()
                     handles_labels.append((handles, labels))
-    '''
+    ''''''
     # Set column labels (top row)
     for i in range(n):
         ax_top = axes[0, i]
         ax_top.set_title(categories[i], fontsize=title_fontsize, pad=10)
-
+    
 
     # Add separate row labels using fig.text instead of modifying subplot y-axis labels
     row_height = 1.0 / (n+1)  # height of each subplot row
@@ -169,8 +313,8 @@ def plot_cellwise_grid(
             rotation=0,
             transform=fig.transFigure
         )
-
-    '''
+    
+    
     '''
     if legend and handles_labels:
         # Flatten handles/labels and deduplicate
@@ -191,8 +335,8 @@ def plot_cellwise_grid(
     '''
     if not legend and mappables:
         cbar_ax = fig.add_axes([0.2, -0.1, 0.6, 0.02])  # Lower Y position
-        #cbar_ax = fig.add_axes([0.96, 0.15, 0.02, 0.7])  # Right side, vertical
-        cbar = fig.colorbar(mappables[0], cax=cbar_ax, orientation='horizontal')
+        cbar_ax = fig.add_axes([0.96, 0.15, 0.02, 0.7])  # Right side, vertical
+        cbar = fig.colorbar(mappables[0], cax=cbar_ax, orientation='vertical')
         cbar.set_label(colorbar_label, fontsize=20)
 
     fig.subplots_adjust(wspace=wspace, hspace=hspace, bottom=bottom, top=top, left=left, right=right)
@@ -296,18 +440,106 @@ from snf import compute
 import snf
 from scipy.spatial.distance import pdist, squareform
 import networkx as nx
+def plot_similarity(ax, df, cell_key, mutable_features, color_feature, global_vmin=-3, global_vmax=3, K=10, mu=0.5):
+    if len(mutable_features) < 2 or df.shape[0] < 2:
+        ax.axis("off")
+        return
 
-def plot_similarity(ax, df, cell_key, mutable_features, color_feature, n_components=2, global_vmin=0, global_vmax=1):
+    try:
+        X = df[mutable_features].copy().to_numpy()
+        scaler = StandardScaler()
+        X = scaler.fit_transform(X)
+        # SNF affinity
+        similarity = snf.make_affinity(X, metric='euclidean', K=K, mu=mu)
+        similarity = np.nan_to_num(similarity, nan=0.0)
+        np.fill_diagonal(similarity, 0.0)
+        n = similarity.shape[0]
+
+        # --- symmetric kNN (union) using the *passed-in* K ---
+        K_eff = max(1, min(K, n - 1))
+        top_idx = np.argsort(similarity, axis=1)[:, ::-1]  # descending
+        mask = np.zeros_like(similarity, dtype=bool)
+        for i in range(n):
+            # take top-K excluding self
+            row = top_idx[i]
+            row = row[row != i][:K_eff]
+            mask[i, row] = True
+        mask = np.logical_or(mask, mask.T)  # union to make symmetric
+
+        # --- build graph ---
+        G = nx.Graph()
+        for i in range(n):
+            G.add_node(i)
+
+        # add weighted edges for i<j to avoid duplicates
+        ii, jj = np.where(mask)
+        for i, j in zip(ii, jj):
+            if i < j:
+                w = similarity[i, j]
+                if w > 0:
+                    G.add_edge(i, j, weight=w)
+
+        if G.number_of_edges() == 0:
+            ax.axis("off")
+            return
+
+        # node colors (handle NaNs; keep global vmin/vmax if provided)
+        vals = df[color_feature].to_numpy()
+        if np.all(np.isnan(vals)):
+            vals = np.zeros_like(vals)
+            vmin, vmax = 0.0, 1.0
+        else:
+            fill_val = np.nanmedian(vals)
+            vals = np.where(np.isnan(vals), fill_val, vals)
+            vmin = global_vmin if global_vmin is not None else np.nanmin(vals)
+            vmax = global_vmax if global_vmax is not None else np.nanmax(vals)
+
+        # weighted layout
+        pos = nx.spring_layout(G, seed=42, weight='weight', iterations=300)
+
+        # edge styling
+        edge_w = np.array([d['weight'] for *_ , d in G.edges(data=True)])
+        ew_norm = (edge_w - edge_w.min()) / (edge_w.ptp() + 1e-12)
+        edge_colors = [plt.cm.inferno(x) for x in ew_norm]
+        edge_widths = 0.5 + 1.5 * ew_norm
+
+        # draw
+        ax.set_axis_off()
+        nx.draw(
+            G, pos, ax=ax, with_labels=False,
+            node_color=vals, cmap='viridis', vmin=vmin, vmax=vmax,
+            node_size=50,
+            edge_color=edge_colors,
+            width=edge_widths
+        )
+
+        # colorbar
+        sm = plt.cm.ScalarMappable(cmap='viridis', norm=plt.Normalize(vmin=vmin, vmax=vmax))
+        sm.set_array([])
+        cbar = plt.colorbar(sm, ax=ax, fraction=0.04, pad=0.01)
+        cbar.set_label(color_feature, fontsize=10)
+        cbar.ax.tick_params(labelsize=9)
+
+    except Exception as e:
+        print(f"Error in plot_similarity (SNF): {e}")
+        ax.axis("off")
+
+
+
+
+def plot_similarity_(ax, df, cell_key, mutable_features, color_feature, n_components=2, global_vmin=0, global_vmax=1, K=10, mu=0.5):
     if len(mutable_features) < 2 or df.shape[0] < 2:
         ax.axis("off")
         return
 
     try:
         X = df[mutable_features].copy()
+        scaler = StandardScaler()
+        X = scaler.fit_transform(X)
         dist = squareform(pdist(X, metric='euclidean'))
 
         # Use SNF to compute the similarity (affinity) matrix
-        similarity = snf.make_affinity(X, metric='euclidean', K=20, mu=0.5)  # K: neighbors, mu: scaling factor
+        similarity = snf.make_affinity(X, metric='euclidean', K=K, mu=mu)  # K: neighbors, mu: scaling factor
 
         G = nx.Graph()
         n = similarity.shape[0]
@@ -356,7 +588,8 @@ def plot_similarity_manual(ax, df, cell_key, mutable_features, color_feature, n_
     try:
         # Avoid modifying original df
         X = df[mutable_features].copy()
-
+        scaler = StandardScaler()
+        X = scaler.fit_transform(X)
         # Calculate Euclidean distance
         dist = squareform(pdist(X, metric='euclidean'))
 
@@ -503,6 +736,8 @@ def plot_counterfactuals(ax, df, cell_key, mutable_features, color_feature, n_co
 
     try:
         X = df[mutable_features].values
+        scaler = StandardScaler()
+        X = scaler.fit_transform(X)
         pca = PCA(n_components=n_components)
         X_pca = pca.fit_transform(X)
 
@@ -540,10 +775,10 @@ def plot_by_cluster(ax, df, cell_key, mutable_features, cluster_method, reducer,
         # Extract and scale mutable features
         X = df[mutable_features].values
         scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
+        X = scaler.fit_transform(X)
 
         # Edge case: all rows are identical after scaling
-        if np.unique(X_scaled, axis=0).shape[0] == 1:
+        if np.unique(X, axis=0).shape[0] == 1:
             ax.scatter([0], [0], c='blue', s=10)
             ax.set_title(f"Cell {cell_key} (Identical)")
             ax.axis('off')
@@ -584,12 +819,12 @@ def plot_by_cluster(ax, df, cell_key, mutable_features, cluster_method, reducer,
         handles = [
             plt.Line2D([], [], marker='o', linestyle='', 
                        color=scatter.cmap(scatter.norm(i)), 
-                       label=f'Cluster {i}')
+                       label=f'{i}')
             for i in unique_clusters
         ]
         ''''''
         ax.legend(handles=handles, title='Cluster', 
-                  bbox_to_anchor=(0.6, 1), loc='upper left', 
+                  bbox_to_anchor=(0.8, 1), loc='upper left', 
                   fontsize=12, title_fontsize=12)
         
         ax.set_xlabel("PC1", fontsize=20)
@@ -643,7 +878,7 @@ def tree_constraints_to_cluster_kmeans(ax, df, cell_key, mutable_features, max_k
         ax.axis("off")
         return
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    X = scaler.fit_transform(X)
     try:
         '''
         # Step 1: Cluster using PCA + KMeans
@@ -651,7 +886,7 @@ def tree_constraints_to_cluster_kmeans(ax, df, cell_key, mutable_features, max_k
         X_pca = pca.fit_transform(X_scaled)
         '''
         from cf_search.visualize import optimal_clusters
-        k, labels = optimal_clusters(X, max_k=max_k) #use unscaled counterfactuals to preserve differences
+        k, labels = optimal_clusters(X, max_k=max_k)
         labels = labels+1
         # Step 2: Train decision tree on constraint features
         X_constraints = df[constraint_features]
@@ -680,7 +915,7 @@ def tree_constraints_to_cluster_kmeans(ax, df, cell_key, mutable_features, max_k
             filled=True,
             rounded=True,
             ax=ax,
-            fontsize=10,
+            fontsize=5,
             precision=2,
             label="root"  # This shows only the split condition and Gini index
         )
@@ -904,7 +1139,7 @@ def eta2_threshold_from_alpha(alpha, n_samples, n_clusters):
     eta2_thresh = (f_crit * df_between) / (f_crit * df_between + df_within)
     return eta2_thresh
 
-def plot_cf_eta2_bar_cell(ax, df, cell_key, mutable_features, cluster_method, reducer, top_n=6, max_k=5, verbose=False):
+def plot_cf_eta2_bar_cell(ax, df, cell_key, mutable_features, cluster_method, reducer, top_n=6, max_k=5, verbose=False, scaled=False):
     if df.empty or len(mutable_features) < 2:
         ax.axis("off")
         return
@@ -915,7 +1150,8 @@ def plot_cf_eta2_bar_cell(ax, df, cell_key, mutable_features, cluster_method, re
         return
 
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    if scaled:
+        X = scaler.fit_transform(X)
 
     try:
         # For plotting into 2D
@@ -981,7 +1217,7 @@ def plot_cf_eta2_bar_cell(ax, df, cell_key, mutable_features, cluster_method, re
 
 
 
-def plot_cf_eta2_bar_constraints_cell(ax, df, cell_key, mutable_features, cluster_method, reducer, top_n=6, max_k=5, verbose=False):
+def plot_cf_eta2_bar_constraints_cell(ax, df, cell_key, mutable_features, cluster_method, reducer, top_n=6, max_k=5, vmax=1, verbose=False, scaled=False):
     if df.empty or len(mutable_features) < 2:
         ax.axis("off")
         return
@@ -994,14 +1230,17 @@ def plot_cf_eta2_bar_constraints_cell(ax, df, cell_key, mutable_features, cluste
     # Constraints = non-mutable columns (not in mutable_features, not metadata columns)
     constraint_features = [
         col for col in df.columns 
-        if col not in mutable_features and col not in ['cell', 'individual_id', 'fitness']
+        if col not in mutable_features 
+            and col not in ['cell', 'individual_id', 'fitness']
+            and "_x_" not in col
     ]
     if len(constraint_features) < 2:
         ax.axis("off")
         return
     
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    if scaled:
+        X = scaler.fit_transform(X)
 
     try:
         # For plotting into 2D
@@ -1055,7 +1294,7 @@ def plot_cf_eta2_bar_constraints_cell(ax, df, cell_key, mutable_features, cluste
         ax.tick_params(axis='y', labelsize=20)  # Increase y-axis tick label size
         if top_feats:
             ax.barh(top_feats[::-1], top_etas[::-1])
-            ax.set_xlim(0, 1)
+            ax.set_xlim(0, vmax)
         else:
             ax.axis("off")
         ax.set_xlabel('$\eta^2$', fontsize=20)
@@ -1075,7 +1314,7 @@ def plot_cf_meanvalue_heatmap_cell(ax, df, cell_key, cluster_method, mutable_fea
         return
 
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    X = scaler.fit_transform(X)
     # For plotting into 2D
     if reducer == "PCA":
         reducer_model = PCA(n_components=2)
@@ -1087,22 +1326,26 @@ def plot_cf_meanvalue_heatmap_cell(ax, df, cell_key, cluster_method, mutable_fea
         X_embedded = X  # No dimensionality reduction
 
     # Clustering
-    if cluster_method == "hierarchal":
-        k, labels, Z = optimal_hclust_k(X, max_k=max_k)
-    else:  # e.g., kmeans
-        k, labels = optimal_clusters(X_embedded, max_k=max_k)
-        labels = labels + 1
+    try:
+        if cluster_method == "hierarchal":
+            k, labels, Z = optimal_hclust_k(X, max_k=max_k)
+        else:
+            k, labels = optimal_clusters(X_embedded, max_k=max_k)
+            labels = labels + 1
+    except ValueError:
+        ax.axis("off")
+        return
 
 
     df_tmp = df.copy()
     df_tmp['cluster'] = labels
     mean_by_cluster = df_tmp.groupby('cluster')[mutable_features].mean()
 
-    sns.heatmap(mean_by_cluster, cmap='coolwarm', center=0, annot=True, fmt=".2f", ax=ax)
+    sns.heatmap(mean_by_cluster.T, cmap='coolwarm', center=0, annot=True, fmt=".2f", ax=ax)
     ax.tick_params(axis='x', labelsize=18)  # Increase x-axis tick label size
     ax.tick_params(axis='y', labelsize=18)  # Increase y-axis tick label size
-    #ax.set_xlabel("Mutable features", fontsize=16)
-    ax.set_ylabel("Cluster", fontsize=16)
+    ax.set_xlabel("Cluster", fontsize=16)
+    #ax.set_ylabel("Cluster", fontsize=16)
 
     #ax.set_title(f"Mean Values per Cluster\nCell {cell_key}")
 
@@ -1123,7 +1366,7 @@ def plot_cf_meanvalue_heatmap_constraints_cell(ax, df, cell_key, cluster_method,
         return
 
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    X = scaler.fit_transform(X)
     try:
         # For plotting into 2D
         if reducer == "PCA":
@@ -1136,24 +1379,28 @@ def plot_cf_meanvalue_heatmap_constraints_cell(ax, df, cell_key, cluster_method,
             X_embedded = X  # No dimensionality reduction
 
         # Clustering
-        if cluster_method == "hierarchal":
-            k, labels, Z = optimal_hclust_k(X, max_k=max_k)
-        else:  # e.g., kmeans
-            k, labels = optimal_clusters(X_embedded, max_k=max_k)
-            labels = labels + 1
+        try:
+            if cluster_method == "hierarchal":
+                k, labels, Z = optimal_hclust_k(X, max_k=max_k)
+            else:
+                k, labels = optimal_clusters(X_embedded, max_k=max_k)
+                labels = labels + 1
+        except ValueError:
+            ax.axis("off")
+            return
 
         # Add cluster label to df and compute mean constraints per cluster
         df_tmp = df.copy()
         df_tmp['cluster'] = labels
         mean_by_cluster = df_tmp.groupby('cluster')[constraint_features].mean()
 
-        sns.heatmap(mean_by_cluster, cmap='coolwarm', center=0, annot=True, fmt=".2f", ax=ax)
+        sns.heatmap(mean_by_cluster.T, cmap='coolwarm', center=0, annot=True, fmt=".2f", ax=ax)
         #ax.set_title(f"Constraint Means\nCell {cell_key}", fontsize=8)
         #ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right")
         ax.tick_params(axis='x', labelsize=20)  # Increase x-axis tick label size
         ax.tick_params(axis='y', labelsize=20)  # Increase y-axis tick label size
-        #ax.set_xlabel("Constraint features", fontsize=16)
-        ax.set_ylabel("Cluster", fontsize=16)
+        ax.set_xlabel("Cluster", fontsize=16)
+        #ax.set_ylabel("Cluster", fontsize=16)
 
     except Exception:
         ax.axis("off")
@@ -1204,12 +1451,12 @@ def plot_cf_kde_cell(ax, df, cell_key, mutable_features, feature, max_k=5, min_v
 
 
 
-def optimal_clusters(X, max_k=5):
+def optimal_clusters(X, max_k=10):
     """Determines the optimal number of clusters using silhouette score."""
     if X.shape[0] < 3:
         return 1, -1  # Not enough samples
 
-    best_k = 2
+    best_k = 3
     best_score = -1
 
     for k in range(2, min(max_k, X.shape[0]) + 1):
