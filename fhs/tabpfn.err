@@ -1,0 +1,65 @@
+/global/home/hpc5434/.local/lib/python3.11/site-packages/sklearn/model_selection/_validation.py:1000: UserWarning: Scoring failed. The score on this train-test partition for these parameters will be set to nan. Details: 
+Traceback (most recent call last):
+  File "/global/home/hpc5434/.local/lib/python3.11/site-packages/sklearn/metrics/_scorer.py", line 139, in __call__
+    score = scorer._score(
+            ^^^^^^^^^^^^^^
+  File "/global/home/hpc5434/.local/lib/python3.11/site-packages/sklearn/metrics/_scorer.py", line 370, in _score
+    response_method = _check_response_method(estimator, self._response_method)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/global/home/hpc5434/.local/lib/python3.11/site-packages/sklearn/utils/validation.py", line 2145, in _check_response_method
+    raise AttributeError(
+AttributeError: LinearRegression has none of the following attributes: decision_function, predict_proba.
+
+  warnings.warn(
+/global/home/hpc5434/.local/lib/python3.11/site-packages/sklearn/model_selection/_validation.py:1000: UserWarning: Scoring failed. The score on this train-test partition for these parameters will be set to nan. Details: 
+Traceback (most recent call last):
+  File "/global/home/hpc5434/.local/lib/python3.11/site-packages/sklearn/metrics/_scorer.py", line 139, in __call__
+    score = scorer._score(
+            ^^^^^^^^^^^^^^
+  File "/global/home/hpc5434/.local/lib/python3.11/site-packages/sklearn/metrics/_scorer.py", line 370, in _score
+    response_method = _check_response_method(estimator, self._response_method)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/global/home/hpc5434/.local/lib/python3.11/site-packages/sklearn/utils/validation.py", line 2145, in _check_response_method
+    raise AttributeError(
+AttributeError: LinearRegression has none of the following attributes: decision_function, predict_proba.
+
+  warnings.warn(
+/global/home/hpc5434/.local/lib/python3.11/site-packages/sklearn/model_selection/_validation.py:1000: UserWarning: Scoring failed. The score on this train-test partition for these parameters will be set to nan. Details: 
+Traceback (most recent call last):
+  File "/global/home/hpc5434/.local/lib/python3.11/site-packages/sklearn/metrics/_scorer.py", line 139, in __call__
+    score = scorer._score(
+            ^^^^^^^^^^^^^^
+  File "/global/home/hpc5434/.local/lib/python3.11/site-packages/sklearn/metrics/_scorer.py", line 370, in _score
+    response_method = _check_response_method(estimator, self._response_method)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/global/home/hpc5434/.local/lib/python3.11/site-packages/sklearn/utils/validation.py", line 2145, in _check_response_method
+    raise AttributeError(
+AttributeError: LinearRegression has none of the following attributes: decision_function, predict_proba.
+
+  warnings.warn(
+/global/home/hpc5434/.local/lib/python3.11/site-packages/sklearn/model_selection/_validation.py:1000: UserWarning: Scoring failed. The score on this train-test partition for these parameters will be set to nan. Details: 
+Traceback (most recent call last):
+  File "/global/home/hpc5434/.local/lib/python3.11/site-packages/sklearn/metrics/_scorer.py", line 139, in __call__
+    score = scorer._score(
+            ^^^^^^^^^^^^^^
+  File "/global/home/hpc5434/.local/lib/python3.11/site-packages/sklearn/metrics/_scorer.py", line 370, in _score
+    response_method = _check_response_method(estimator, self._response_method)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/global/home/hpc5434/.local/lib/python3.11/site-packages/sklearn/utils/validation.py", line 2145, in _check_response_method
+    raise AttributeError(
+AttributeError: LinearRegression has none of the following attributes: decision_function, predict_proba.
+
+  warnings.warn(
+/global/home/hpc5434/.local/lib/python3.11/site-packages/sklearn/model_selection/_validation.py:1000: UserWarning: Scoring failed. The score on this train-test partition for these parameters will be set to nan. Details: 
+Traceback (most recent call last):
+  File "/global/home/hpc5434/.local/lib/python3.11/site-packages/sklearn/metrics/_scorer.py", line 139, in __call__
+    score = scorer._score(
+            ^^^^^^^^^^^^^^
+  File "/global/home/hpc5434/.local/lib/python3.11/site-packages/sklearn/metrics/_scorer.py", line 370, in _score
+    response_method = _check_response_method(estimator, self._response_method)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/global/home/hpc5434/.local/lib/python3.11/site-packages/sklearn/utils/validation.py", line 2145, in _check_response_method
+    raise AttributeError(
+AttributeError: LinearRegression has none of the following attributes: decision_function, predict_proba.
+
+  warnings.warn(
