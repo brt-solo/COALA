@@ -243,10 +243,10 @@ with open(os.path.join(model_dir, "xgb_nhanes_diet.pkl"), "wb") as f:
     pickle.dump(xgb_final, f)
 print("\nSaved model to ~/models/xgb_nhanes_diet.pkl")
 
-save_dir = os.path.expanduser("~/MAP-CF/real")
+save_dir = os.path.expanduser("~/COALA/models/real")
 os.makedirs(save_dir, exist_ok=True)
 pd.DataFrame(X_train_arr, columns=best_features).to_csv(
     os.path.join(save_dir, "X_train_xgb_nhanes_diet.csv"), index=False)
 pd.DataFrame(X_test_arr, columns=best_features).to_csv(
     os.path.join(save_dir, "X_test_xgb_nhanes_diet.csv"),  index=False)
-print("Saved train/test CSVs to ~/MAP-CF/real/")
+print("Saved train/test CSVs to ~/COALA/models/real/")

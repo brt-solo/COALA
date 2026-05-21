@@ -172,7 +172,7 @@ with open(model_path, "wb") as f:
 print("\nSaved model to:", model_path)
 
 # ── Save train / test arrays ──────────────────────────────────────────────────
-save_dir = os.path.expanduser("~/COALA/MAP-CF/real")
+save_dir = os.path.expanduser("~/COALA/models/real")
 os.makedirs(save_dir, exist_ok=True)
 
 X_train_df = pd.DataFrame(X_train_arr, columns=best_features)

@@ -22,8 +22,8 @@ warnings.filterwarnings("ignore", message="X does not have valid feature names",
 
 # ── Config ────────────────────────────────────────────────────────────────────
 MODEL_PATH      = os.path.expanduser("~/models/xgb_fhs.pkl")
-TRAIN_PATH      = os.path.expanduser("~/COALA/MAP-CF/real/X_train_xgb_fhs.csv")
-REFERENCE_PATH  = os.path.expanduser("~/COALA/MAP-CF/real/X_test_xgb_fhs.csv")
+TRAIN_PATH      = os.path.expanduser("~/COALA/models/real/X_train_xgb_fhs.csv")
+REFERENCE_PATH  = os.path.expanduser("~/COALA/models/real/X_test_xgb_fhs.csv")
 FEATURE_JSON    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feature_categories_fhs.json")
 OUTPUT_DIR      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "xgb_fhs_output")
 INIT_POP        = 1000
