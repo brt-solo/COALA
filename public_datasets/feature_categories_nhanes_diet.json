@@ -1,0 +1,12 @@
+{
+  "Diet": [
+    "Energy (kcal)",
+    "Carbohydrates (g)",
+    "Total sugars (g)",
+    "Total fat (g)",
+    "Saturated fat (g)",
+    "Protein (g)",
+    "Dietary fiber (g)",
+    "Sodium (mg)"
+  ]
+}

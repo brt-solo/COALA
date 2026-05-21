@@ -1,0 +1,18 @@
+{
+  "Physical Health": [
+    "Waist circumference (cm)",
+    "Systolic BP (mmHg)",
+    "Diastolic BP (mmHg)",
+    "Total cholesterol (mg/dL)"
+  ],
+  "Diet": [
+    "Energy (kcal)",
+    "Carbohydrates (g)",
+    "Total sugars (g)",
+    "Total fat (g)",
+    "Saturated fat (g)",
+    "Protein (g)",
+    "Dietary fiber (g)",
+    "Sodium (mg)"
+  ]
+}
