@@ -85,5 +85,7 @@ If you use COALA in your research, please cite:
   note    = {Preprint}
 }
 ```
+## License
 
+This project is licensed under the MIT License.
 
