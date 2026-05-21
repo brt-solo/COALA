@@ -8,14 +8,23 @@ personalized intervention strategies in biomedical research.
 
 ## Repository Structure
 COALA/
+
 ├── cf_search/          # Core COALA implementation
+
 ├── models/             # Trained models (synthetic and real datasets)
+
 ├── public_datasets/    # NHANES and Framingham datasets
+
 ├── synthetic/          # Synthetic dataset and data generation scripts
+
 ├── visualization_synthetic.ipynb         # Figures for synthetic dataset analysis
+
 ├── visualization_xgb_nhanes_diet.ipynb   # Figures for NHANES dietary analysis
+
 ├── visualization_xgb_nhanes_multi.ipynb  # Figures for NHANES multi-cell analysis
+
 ├── visualization_xgb_fhs.ipynb           # Figures for Framingham analysis
+
 └── requirements.txt    # Python dependencies
 
 
