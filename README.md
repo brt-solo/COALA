@@ -40,34 +40,66 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Running COALA
+### Prerequisites
 
-COALA takes a pre-trained ML model and a dataset as input. The user 
-defines which features are mutable (actionable) and which are 
-constrained (fixed). COALA then identifies the optimal counterfactual 
-for each subject.
+Ensure you have a trained ML model saved as a `.pkl` file and your 
+dataset split into train and test CSV files.
+
+### Configuration
+
+Before running, edit the config section at the top of `run_coala.py` 
+to point to your files:
 
 ```python
-from cf_search import COALA
-
-# Initialize COALA with your model and feature categories
-coala = COALA(model=your_model, 
-              mutable_features=mutable_cols,
-              constraint_features=constraint_cols)
-
-# Run optimization
-counterfactuals = coala.run(X)
+MODEL_PATH      = "path/to/your/model.pkl"
+TRAIN_PATH      = "path/to/X_train.csv"
+REFERENCE_PATH  = "path/to/X_test.csv"
+FEATURE_JSON    = "path/to/feature_categories.json"
+OUTPUT_DIR      = "path/to/output/directory"
 ```
+
+Key parameters:
+- `INIT_POP` — number of random counterfactuals generated in the 
+  initialization phase (default: 1000)
+- `MAX_ITER` — maximum number of iterations per subject (default: 10000)
+- `MAX_INDIVIDUALS` — maximum number of subjects to process (default: 200)
+- `METHOD` — crossover method; options are `uniform`, `single_point`, 
+  `simulated_binary`, or `random_mutation` (default: `uniform`)
+
+### Feature Categories
+
+Feature categories are defined in a JSON file that specifies which 
+features belong to which group. For example:
+
+```json
+{
+  "dietary": ["Energy (kcal)", "Protein (g)", "Total fat (g)"],
+  "clinical": ["Age (years)", "Waist circumference (cm)"]
+}
+```
+
+Features in mutable categories will be optimized; all others are held 
+constant as constraint features.
+
+### Running COALA
+
+```bash
+python run_coala.py
+```
+
+Output is saved as `counterfactuals_multi.pkl` in the specified output 
+directory — a dictionary mapping each subject index to a DataFrame of 
+their optimal counterfactuals across cells.
 
 ### Reproducing Paper Results
 
-Each visualization notebook corresponds to a dataset and analysis 
-presented in the paper:
+To reproduce the figures in the paper, run the corresponding notebook 
+after generating counterfactuals:
 
-- `visualization_synthetic.ipynb` — synthetic dataset results
-- `visualization_xgb_nhanes_diet.ipynb` — NHANES dietary analysis
-- `visualization_xgb_nhanes_multi.ipynb` — NHANES multi-cell analysis (Supplementary)
-- `visualization_xgb_fhs.ipynb` — Framingham Heart Study analysis (Supplementary)
+- `visualization_synthetic.ipynb` — synthetic dataset (Figures 2, S1)
+- `visualization_xgb_nhanes_diet.ipynb` — NHANES analysis (Figures 3–6)
+- `visualization_xgb_nhanes_multi.ipynb` — multi-cell analysis (Supplementary)
+- `visualization_xgb_fhs.ipynb` — Framingham analysis (Supplementary)
 
 ## Data Availability
 
