@@ -47,8 +47,15 @@ dataset split into train and test CSV files.
 
 ### Configuration
 
-Before running, edit the config section at the top of `run_coala.py` 
-to point to your files:
+There is no single `run_coala.py` entry point — instead, each dataset
+has its own runner script in `public_datasets/`:
+
+- `public_datasets/run_coala_xgb_fhs.py` — Framingham Heart Study
+- `public_datasets/run_coala_xgb_nhanes_diet.py` — NHANES dietary analysis
+- `public_datasets/run_coala_xgb_nhanes_multi.py` — NHANES multi-cell analysis
+
+Before running, edit the config section at the top of the relevant
+script to point to your files:
 
 ```python
 MODEL_PATH      = "path/to/your/model.pkl"
@@ -84,7 +91,7 @@ constant as constraint features.
 ### Running COALA
 
 ```bash
-python run_coala.py
+python public_datasets/run_coala_xgb_fhs.py
 ```
 
 Output is saved as `counterfactuals_multi.pkl` in the specified output 

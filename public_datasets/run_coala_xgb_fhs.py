@@ -7,7 +7,8 @@ sys.stderr.reconfigure(line_buffering=True)
 
 print("Starting run_coala_xgb_fhs.py", flush=True)
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(REPO_ROOT)
 
 import pickle
 import json
@@ -21,9 +22,9 @@ print("mapcf imported", flush=True)
 warnings.filterwarnings("ignore", message="X does not have valid feature names", category=UserWarning)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-MODEL_PATH      = os.path.expanduser("~/models/xgb_fhs.pkl")
-TRAIN_PATH      = os.path.expanduser("~/COALA/models/real/X_train_xgb_fhs.csv")
-REFERENCE_PATH  = os.path.expanduser("~/COALA/models/real/X_test_xgb_fhs.csv")
+MODEL_PATH      = os.path.join(REPO_ROOT, "models", "xgb_fhs.pkl")
+TRAIN_PATH      = os.path.join(REPO_ROOT, "models", "real", "X_train_xgb_fhs.csv")
+REFERENCE_PATH  = os.path.join(REPO_ROOT, "models", "real", "X_test_xgb_fhs.csv")
 FEATURE_JSON    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feature_categories_fhs.json")
 OUTPUT_DIR      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "xgb_fhs_output")
 INIT_POP        = 1000

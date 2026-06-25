@@ -39,7 +39,7 @@ def print_metrics(y_true, y_prob, label=""):
     print(f"  Brier:       {brier_score_loss(y_true, y_prob):.4f}")
 
 # ── Data loading ──────────────────────────────────────────────────────────────
-data_dir = os.path.expanduser("~/COALA/public_datasets")
+data_dir = os.path.dirname(os.path.abspath(__file__))
 
 demo  = pd.read_sas(os.path.join(data_dir, "DEMO_J.xpt"))
 bmx   = pd.read_sas(os.path.join(data_dir, "BMX_J.xpt"))
@@ -237,16 +237,17 @@ print_metrics(y_train, rf.predict_proba(X_train_arr)[:, 1], "Random Forest — T
 print_metrics(y_test,  rf.predict_proba(X_test_arr)[:, 1],  "Random Forest — Test")
 
 # ── Save ─────────────────────────────────────────────────────────────────────
-model_dir = os.path.expanduser("~/models")
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+model_dir = os.path.join(repo_root, "models")
 os.makedirs(model_dir, exist_ok=True)
 with open(os.path.join(model_dir, "xgb_nhanes_diet.pkl"), "wb") as f:
     pickle.dump(xgb_final, f)
-print("\nSaved model to ~/models/xgb_nhanes_diet.pkl")
+print("\nSaved model to", os.path.join(model_dir, "xgb_nhanes_diet.pkl"))
 
-save_dir = os.path.expanduser("~/COALA/models/real")
+save_dir = os.path.join(repo_root, "models", "real")
 os.makedirs(save_dir, exist_ok=True)
 pd.DataFrame(X_train_arr, columns=best_features).to_csv(
     os.path.join(save_dir, "X_train_xgb_nhanes_diet.csv"), index=False)
 pd.DataFrame(X_test_arr, columns=best_features).to_csv(
     os.path.join(save_dir, "X_test_xgb_nhanes_diet.csv"),  index=False)
-print("Saved train/test CSVs to ~/COALA/models/real/")
+print("Saved train/test CSVs to", save_dir)

@@ -164,7 +164,8 @@ print_metrics(y_train, rf.predict_proba(X_train_arr)[:, 1], "Random Forest — T
 print_metrics(y_test,  rf.predict_proba(X_test_arr)[:, 1],  "Random Forest — Test")
 
 # ── Save XGBoost model ────────────────────────────────────────────────────────
-model_dir = os.path.expanduser("~/models")
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+model_dir = os.path.join(repo_root, "models")
 os.makedirs(model_dir, exist_ok=True)
 model_path = os.path.join(model_dir, "xgb_fhs.pkl")
 with open(model_path, "wb") as f:
@@ -172,7 +173,7 @@ with open(model_path, "wb") as f:
 print("\nSaved model to:", model_path)
 
 # ── Save train / test arrays ──────────────────────────────────────────────────
-save_dir = os.path.expanduser("~/COALA/models/real")
+save_dir = os.path.join(repo_root, "models", "real")
 os.makedirs(save_dir, exist_ok=True)
 
 X_train_df = pd.DataFrame(X_train_arr, columns=best_features)

@@ -1,6 +1,7 @@
 import sys
 import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(REPO_ROOT)
 
 import pickle
 import json
@@ -12,9 +13,9 @@ from cf_search.map import mapcf_instance_classification
 warnings.filterwarnings("ignore", message="X does not have valid feature names", category=UserWarning)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-MODEL_PATH      = os.path.expanduser("~/models/xgb_nhanes_diet.pkl")
-TRAIN_PATH      = os.path.expanduser("~/COALA/models/real/X_train_xgb_nhanes_diet.csv")
-REFERENCE_PATH  = os.path.expanduser("~/COALA/models/real/X_test_xgb_nhanes_diet.csv")
+MODEL_PATH      = os.path.join(REPO_ROOT, "models", "xgb_nhanes_diet.pkl")
+TRAIN_PATH      = os.path.join(REPO_ROOT, "models", "real", "X_train_xgb_nhanes_diet.csv")
+REFERENCE_PATH  = os.path.join(REPO_ROOT, "models", "real", "X_test_xgb_nhanes_diet.csv")
 FEATURE_JSON    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feature_categories_nhanes_diet.json")
 OUTPUT_DIR      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "xgb_nhanes_diet_output")
 INIT_POP        = 1000

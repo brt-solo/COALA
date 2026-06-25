@@ -12,3 +12,10 @@ umap_learn==0.5.7
 tabpfn==2.0.9
 ipykernel==6.29.5
 shap==0.39.0
+xgboost==2.1.1
+joblib==1.4.2
+tqdm==4.66.5
+networkx==3.3
+imbalanced-learn==0.12.3
+snfpy==0.2.2
+wesanderson==0.0.4
