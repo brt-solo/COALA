@@ -36,11 +36,10 @@ def print_metrics(y_true, y_prob, label=""):
     print(f"  Brier:       {brier_score_loss(y_true, y_prob):.4f}")
 
 # ── Data loading ──────────────────────────────────────────────────────────────
-url = (
-    "https://ocw.mit.edu/courses/15-071-the-analytics-edge-spring-2017/"
-    "5d689a024551e672313f7fd7eb1bee8d_framingham.csv"
-)
-df = pd.read_csv(url)
+# Dataset: MIT OCW 15.071 The Analytics Edge (Spring 2017), CC BY-NC-SA 4.0.
+# See README "Data Availability" for attribution and license details.
+data_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "framingham.csv")
+df = pd.read_csv(data_path)
 
 print(df.head())
 print(df.columns)

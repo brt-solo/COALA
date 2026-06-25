@@ -13,7 +13,7 @@ COALA/
 
 ├── models/             # Synthetic trained model; real-dataset train/test splits only (see Data Availability)
 
-├── public_datasets/    # Scripts and feature-category configs for the NHANES/Framingham analyses (raw data not included — see Data Availability)
+├── public_datasets/    # Scripts, configs, and raw NHANES/Framingham data for the real-dataset analyses (see Data Availability for license/attribution)
 
 ├── synthetic/          # Synthetic dataset and data generation scripts
 
@@ -114,17 +114,25 @@ after generating counterfactuals:
 
 ## Data Availability
 
-The NHANES 2017–2018 dataset is publicly available from the 
-[CDC/NCHS](https://www.cdc.gov/nchs/nhanes/index.htm).
+**NHANES.** The raw `.xpt`/`.XPT` files in `public_datasets/` (DEMO_J, 
+BMX_J, BPX_J, TCHOL_J, GHB_J, SMQ_J, DR1TOT_J) are from the NHANES 
+2017–2018 cycle, publicly available from the 
+[CDC/NCHS](https://www.cdc.gov/nchs/nhanes/index.htm). NHANES data are 
+a U.S. government work and in the public domain.
 
-The Framingham Heart Study dataset was obtained from the publicly 
-available MIT OpenCourseWare repository.
+**Framingham Heart Study.** `public_datasets/framingham.csv` is the 
+teaching dataset from MIT OpenCourseWare course 
+[15.071 The Analytics Edge (Spring 2017)](https://ocw.mit.edu/courses/15-071-the-analytics-edge-spring-2017/), 
+made available under the 
+[Creative Commons BY-NC-SA 4.0 license](https://ocw.mit.edu/pages/privacy-and-terms-of-use/).
+Credit: Massachusetts Institute of Technology, 15.071 The Analytics 
+Edge, Spring 2017, MIT OpenCourseWare, https://ocw.mit.edu. License: 
+CC BY-NC-SA 4.0. No changes were made to the data itself.
 
 Synthetic data and the synthetic trained model are included in this 
-repository. Raw NHANES/FHS data and the real-dataset trained models 
-are not included — obtain the data from the sources above, then use 
+repository. The real-dataset *trained models* are not included — use 
 `public_datasets/xgb_fhs.py` / `xgb_nhanes_diet.py` to train and save 
-the corresponding models before running COALA on them.
+them locally before running COALA on the real datasets.
 
 ## Citation
 
