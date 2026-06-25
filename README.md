@@ -11,9 +11,9 @@ COALA/
 
 ├── cf_search/          # Core COALA implementation
 
-├── models/             # Trained models (synthetic and real datasets)
+├── models/             # Synthetic trained model; real-dataset train/test splits only (see Data Availability)
 
-├── public_datasets/    # NHANES and Framingham datasets
+├── public_datasets/    # Scripts and feature-category configs for the NHANES/Framingham analyses (raw data not included — see Data Availability)
 
 ├── synthetic/          # Synthetic dataset and data generation scripts
 
@@ -69,9 +69,13 @@ Key parameters:
 - `INIT_POP` — number of random counterfactuals generated in the 
   initialization phase (default: 1000)
 - `MAX_ITER` — maximum number of iterations per subject (default: 10000)
-- `MAX_INDIVIDUALS` — maximum number of subjects to process (default: 200)
+- `MAX_INDIVIDUALS` — maximum number of subjects to process (varies by 
+  script: 500 for the FHS and NHANES dietary runners, 200 for the 
+  NHANES multi-cell runner)
 - `METHOD` — crossover method; options are `uniform`, `single_point`, 
-  `simulated_binary`, or `random_mutation` (default: `uniform`)
+  or `sbx` (simulated binary crossover) (default: `uniform`)
+- `MUTATION_RATE` — probability of applying random mutation on top of 
+  crossover; set to `None` or `0` to disable it (default: `None`)
 
 ### Feature Categories
 
@@ -94,7 +98,7 @@ constant as constraint features.
 python public_datasets/run_coala_xgb_fhs.py
 ```
 
-Output is saved as `counterfactuals_multi.pkl` in the specified output 
+Output is saved as `counterfactuals.pkl` in the specified output 
 directory — a dictionary mapping each subject index to a DataFrame of 
 their optimal counterfactuals across cells.
 
@@ -116,13 +120,17 @@ The NHANES 2017–2018 dataset is publicly available from the
 The Framingham Heart Study dataset was obtained from the publicly 
 available MIT OpenCourseWare repository.
 
-Synthetic data and trained models are included in this repository.
+Synthetic data and the synthetic trained model are included in this 
+repository. Raw NHANES/FHS data and the real-dataset trained models 
+are not included — obtain the data from the sources above, then use 
+`public_datasets/xgb_fhs.py` / `xgb_nhanes_diet.py` to train and save 
+the corresponding models before running COALA on them.
 
 ## Citation
 
 If you use COALA in your research, please cite:
 
-```bitex
+```bibtex
 @article{han_2025,
   author  = {Han, Bryant and Duan, Qingling and Hu, Ting},
   title   = {Identifying intervention strategies from machine learning 
