@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=xgb_nhanes_coala_multi
 #SBATCH --mail-type=ALL
-#SBATCH --mail-user=19bh19@queensu.ca
+#SBATCH --mail-user=your@email.com
 #SBATCH --qos=privileged
 #SBATCH --partition=reserved
 #SBATCH --cpus-per-task=4
@@ -10,6 +10,7 @@
 #SBATCH --output=xgb_nhanes_coala_multi.out
 #SBATCH --error=xgb_nhanes_coala_multi.err
 
+# Activate your virtualenv, e.g.: source ~/myenv/bin/activate
 source ~/tflow/bin/activate
 
 python -u run_coala_xgb_nhanes_multi.py
